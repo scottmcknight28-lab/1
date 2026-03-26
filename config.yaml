@@ -51,3 +51,30 @@ scraping:
 
 database:
   path: "wine_auction.db"
+
+schedule:
+  # Timezone for all schedule times (IANA name)
+  timezone: "Australia/Sydney"
+
+  # Auction close times (24h format, local timezone above)
+  # Langton's typically closes Tuesday and Sunday evenings
+  tuesday_close:  "20:00"
+  sunday_close:   "20:00"
+
+  # How many hours before close to send the pre-auction report
+  pre_auction_hours: 24
+
+  # How many hours after close to run the post-auction results scrape
+  post_auction_hours: 2
+
+  # Where to write report files (directory, created if missing)
+  reports_dir: "reports"
+
+  # Optional: email reports  (leave smtp_host blank to disable)
+  email:
+    smtp_host: ""
+    smtp_port: 587
+    smtp_user: ""
+    smtp_password: ""
+    from_addr: ""
+    to_addrs: []

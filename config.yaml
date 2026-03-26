@@ -1,0 +1,53 @@
+# Langton's Wine Auction Agent Configuration
+# Edit this file to customise your bidding strategy.
+
+bidding:
+  # Bid when the auction estimate is this far below the historical market average (%)
+  # e.g. 15 means only bid when estimate is ≥15% below the running average
+  value_threshold_pct: 15
+
+  # Absolute cap on any single bid (AUD)
+  max_bid_amount: 500
+
+  # Producers to focus on (case-insensitive, partial match).
+  # Leave empty to consider all producers.
+  preferred_producers:
+    - Penfolds
+    - Henschke
+    - Leeuwin Estate
+    - Giaconda
+    - Clarendon Hills
+
+  # Regions to focus on (case-insensitive, partial match).
+  # Leave empty to consider all regions.
+  preferred_regions:
+    - Barossa Valley
+    - Eden Valley
+    - Margaret River
+    - Coonawarra
+    - Yarra Valley
+
+  # Provenance / condition requirements
+  condition_requirements:
+    # Minimum acceptable fill level.
+    # Options (best → worst): "into neck", "base of neck", "top shoulder",
+    #   "upper shoulder", "mid shoulder", "lower shoulder"
+    min_fill_level: "top shoulder"
+
+    # Require cellar-stored provenance?
+    require_cellar_stored: false
+
+    # Require original carton?
+    require_original_carton: false
+
+scraping:
+  base_url: "https://www.langtons.com.au"
+
+  # Politeness delay between HTTP requests (seconds)
+  delay_seconds: 2.0
+
+  # Maximum pages to scrape per auction (0 = unlimited)
+  max_pages_per_auction: 10
+
+database:
+  path: "wine_auction.db"

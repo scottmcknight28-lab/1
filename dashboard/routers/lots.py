@@ -11,7 +11,7 @@ async def lots_page(request: Request):
     auctions = db.list_auctions()
     db.close()
     return request.app.state.templates.TemplateResponse(
-        "lots.html", {"request": request, "auctions": auctions}
+        request, "lots.html", {"auctions": auctions}
     )
 
 

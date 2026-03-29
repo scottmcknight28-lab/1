@@ -25,9 +25,8 @@ async def upcoming_page(request: Request):
     no  = [r for r in recs if not r["bid"]]
 
     return request.app.state.templates.TemplateResponse(
-        "upcoming.html",
-        {"request": request, "recommended": yes, "not_recommended": no,
-         "open_count": len(open_lots)},
+        request, "upcoming.html",
+        {"recommended": yes, "not_recommended": no, "open_count": len(open_lots)},
     )
 
 

@@ -18,14 +18,15 @@ async def reports_page(request: Request):
     files = sorted(rdir.glob("*.txt"), key=lambda f: f.stat().st_mtime, reverse=True)
     items = [
         {
-            "name":     f.name,
-            "size_kb":  round(f.stat().st_size / 1024, 1),
-            "modified": f.stat().st_mtime,
+            "name":    f.name,
+            "size_kb": round(f.stat().st_size / 1024, 1),
+            "mtime":   __import__("datetime").datetime.fromtimestamp(
+                           f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
         }
         for f in files
     ]
     return request.app.state.templates.TemplateResponse(
-        "reports.html", {"request": request, "files": items}
+        request, "reports.html", {"reports": items}
     )
 
 
@@ -37,7 +38,7 @@ async def report_view(request: Request, filename: str):
         raise HTTPException(404, "Report not found")
     content = fpath.read_text(errors="replace")
     return request.app.state.templates.TemplateResponse(
-        "report_view.html", {"request": request, "filename": safe, "content": content}
+        request, "report_view.html", {"filename": safe, "content": content}
     )
 
 

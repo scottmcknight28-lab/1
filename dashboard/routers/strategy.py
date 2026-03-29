@@ -12,9 +12,8 @@ async def strategy_page(request: Request, saved: bool = False):
     b   = cfg.get("bidding", {})
     cond = b.get("condition_requirements", {})
     return request.app.state.templates.TemplateResponse(
-        "strategy.html",
+        request, "strategy.html",
         {
-            "request": request,
             "saved": saved,
             "value_threshold_pct": b.get("value_threshold_pct", 15),
             "max_bid_amount":      b.get("max_bid_amount", 500),

@@ -15,6 +15,6 @@ async def index(request: Request):
     jobs = get_job_schedule(request.app.state.scheduler)
 
     return request.app.state.templates.TemplateResponse(
-        "dashboard.html",
-        {"request": request, "stats": stats, "recs": recs, "jobs": jobs},
+        request, "dashboard.html",
+        {"stats": stats, "recs": recs, "jobs": jobs},
     )

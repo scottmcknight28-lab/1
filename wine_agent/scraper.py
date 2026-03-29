@@ -34,17 +34,20 @@ _DW_BASE = "/on/demandware.store/Sites-langtons-Site/en_AU"
 _SELECTORS: dict[str, list[str]] = {
     # Lot / product tile containers
     "lot_containers": [
-        ".product-tile", ".lot-tile", ".bid-tile",
+        "div.product-tile.auction-tile",    # confirmed: both classes present
+        ".product-tile",
+        ".lot-tile", ".bid-tile",
         ".product-grid-item", "[class*='product-tile']",
-        # fallback generic
         ".lot-item", ".lot", "[class*='lot-card']", "[data-lot]",
         "article.wine", ".wine-lot", ".auction-lot",
     ],
     "lot_number": [
-        ".lot-number", ".lot-num", "[data-lot-number]",
+        ".lot-number",                      # confirmed: "Lot # 90"
+        ".lot-num", "[data-lot-number]",
         ".bid-number", ".tile-lot-number", "h4",
     ],
     "wine_name": [
+        ".pdp-link .link",                  # confirmed: full wine name as text link
         ".product-name", ".tile-product-name", ".wine-name",
         ".pdp-name", ".lot-title h2", ".lot-title",
         "h1.product-name", "h1", "h2", "h3",
@@ -63,11 +66,15 @@ _SELECTORS: dict[str, list[str]] = {
         "[class*='varietal']", "[class*='grape']",
     ],
     "estimate": [
-        ".estimate", ".price-estimate", ".tile-estimate",
+        ".price-estimate .price-info",      # confirmed: "Estimate Est/item $900.00 - $1300.00"
+        ".price-info",
+        ".estimate", ".price-estimate",
         "[class*='estimate']", "[class*='price-estimate']",
     ],
     "current_bid": [
-        ".curr-bid", ".current-bid", ".tile-curr-bid",
+        ".curr-bid .max-bid-price",         # confirmed: "$827.00"
+        ".max-bid-price",
+        ".curr-bid", ".current-bid",
         "[class*='curr-bid']", "[class*='current-bid']",
     ],
     "realized": [
@@ -75,14 +82,18 @@ _SELECTORS: dict[str, list[str]] = {
         "[class*='realized']", "[class*='hammer']", "[class*='sold-price']",
     ],
     "condition": [
+        "button.info-icon .tooltip",        # confirmed: "Base of Neck."
+        "button.info-icon span",
         ".condition", ".provenance", ".classification-badge",
         "[class*='condition']", "[class*='provenance']",
     ],
     "bottle_size": [
+        ".size-text",                       # confirmed: "1 x Bottle"
         ".bottle-size", ".format", ".tile-format",
         "[class*='bottle-size']", "[class*='format']",
     ],
     "quantity": [
+        ".size-text",                       # "1 x Bottle" → parse count from this
         ".quantity", ".tile-quantity",
         "[class*='quantity']", "[class*='bottles']",
     ],
@@ -336,9 +347,12 @@ class LangtonsScraper:
                 href = link["href"]
                 lot_url = href if href.startswith("http") else self.base_url + href
 
-        # Lot number from URL: auc-var-NNNNNN
-        lot_number = self._text(el, _SELECTORS["lot_number"]) or ""
+        # Lot number — ".lot-number" gives "Lot # 90", strip prefix
+        lot_number_raw = self._text(el, _SELECTORS["lot_number"]) or ""
+        m_lot = re.search(r"\d+", lot_number_raw)
+        lot_number = m_lot.group(0) if m_lot else ""
         if not lot_number:
+            # Fallback: extract from auc-var-NNNNNN in URL
             m = re.search(r"auc-var-(\d+)", lot_url)
             if m:
                 lot_number = m.group(1)
@@ -361,17 +375,12 @@ class LangtonsScraper:
         vintage  = self._parse_vintage(wine_name) or self._parse_vintage(wine_label)
 
         # ── Bottle format & quantity ──────────────────────────────────
-        # Format (Bottle / Magnum etc.) is the last word in wine_name
-        bsize_text = self._text(el, _SELECTORS["bottle_size"]) or ""
-        if not bsize_text:
-            last_word = wine_name.split()[-1] if wine_name else ""
-            if last_word.lower() in ("bottle", "magnum", "jeroboam", "imperiale",
-                                      "methuselah", "half", "double"):
-                bsize_text = last_word
-        bsize_text = bsize_text or "750ml"
-
-        qty_text = self._text(el, _SELECTORS["quantity"]) or ""
-        qty = self._parse_quantity(qty_text) or 1
+        # .size-text gives "1 x Bottle" — parse both qty and format from it
+        size_raw = self._text(el, _SELECTORS["bottle_size"]) or ""
+        qty = self._parse_quantity(size_raw) or 1
+        # Extract format word: "1 x Bottle" → "Bottle"
+        m_fmt = re.search(r"[xX×]\s*(\w+)", size_raw)
+        bsize_text = m_fmt.group(1).capitalize() if m_fmt else size_raw or "Bottle"
 
         # ── Closing date (open = no realized price yet) ───────────────
         countdown = el.select_one(".countdown[data-end-date]")
@@ -599,7 +608,11 @@ class LangtonsScraper:
 
     @staticmethod
     def _parse_quantity(text: str) -> Optional[int]:
-        m = re.search(r"(\d+)\s*(?:bottle|x\s*\d|btl)", text, re.I)
+        # Handles: "1 x Bottle", "6 x Bottle", "12 bottles", "6btl"
+        m = re.search(r"(\d+)\s*[xX×]\s*\w", text)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"(\d+)\s*(?:bottle|btl)", text, re.I)
         return int(m.group(1)) if m else None
 
     @staticmethod

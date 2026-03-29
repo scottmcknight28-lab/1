@@ -89,49 +89,72 @@ async def api_scrape(request: Request):
 
 @router.get("/api/scrape/debug")
 async def api_scrape_debug(request: Request):
-    """Fetch Langton's auctions page and return diagnostic info to help tune selectors."""
+    """Fetch Langton's pages and return diagnostic info for tuning selectors."""
     import asyncio
     import yaml
-    from wine_agent.scraper import LangtonsScraper
+    from wine_agent.scraper import LangtonsScraper, _SELECTORS
 
     def _debug(config_path: str) -> dict:
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         base_url = cfg.get("scraping", {}).get("base_url", "https://www.langtons.com.au")
 
-        scraper = LangtonsScraper(base_url=base_url, delay_seconds=0)
-        results = {}
+        scraper = LangtonsScraper(base_url=base_url, delay_seconds=0.5)
+        results: dict = {}
 
-        for path in ["/auctions/", "/auctions/current/", "/"]:
+        # ── 1. Auction listing page ───────────────────────────────────
+        for path in ["/auctions.html", "/auctions"]:
             url = base_url + path
             soup = scraper._fetch(url)
             if soup is None:
-                results[path] = {"error": "fetch failed (HTTP error or network issue)"}
+                results[path] = {"error": "fetch failed"}
                 continue
 
-            html = str(soup)
-            all_hrefs = [a.get("href", "") for a in soup.find_all("a", href=True)]
-            auction_hrefs = [h for h in all_hrefs if "auction" in h.lower()]
-
-            # Collect unique CSS classes from the page
             classes: set[str] = set()
             for el in soup.find_all(True):
                 classes.update(el.get("class", []))
 
-            # Lot-looking elements
-            lot_candidates = soup.select(
-                ".lot-item, .lot, [class*='lot-card'], [data-lot], "
-                "article.wine, .wine-lot, .auction-lot"
-            )
+            tiles = soup.select(".auction-tile")
+            first_tile_html = str(tiles[0])[:2000] if tiles else None
+            auction_links = scraper._find_auction_links(soup)
 
             results[path] = {
-                "html_length": len(html),
-                "is_js_shell": len(html) < 5000 or "window.__" in html or '"__NEXT_DATA__"' in html,
-                "auction_links": auction_hrefs[:20],
-                "lot_elements_found": len(lot_candidates),
-                "css_classes_sample": sorted(list(classes))[:80],
-                "html_head_preview": html[:800],
+                "html_length": len(str(soup)),
+                "auction_tiles_found": len(tiles),
+                "first_tile_html": first_tile_html,
+                "auction_links_parsed": auction_links[:10],
+                "css_classes_sample": sorted(classes)[:100],
             }
+
+            # ── 2. Probe first auction's lot listing page ─────────────
+            if auction_links:
+                first = auction_links[0]
+                lot_soup = scraper._fetch(first["url"])
+                if lot_soup:
+                    lot_classes: set[str] = set()
+                    for el in lot_soup.find_all(True):
+                        lot_classes.update(el.get("class", []))
+
+                    lot_containers: list = []
+                    matched_sel = None
+                    for sel in _SELECTORS["lot_containers"]:
+                        found = lot_soup.select(sel)
+                        if found:
+                            lot_containers = found
+                            matched_sel = sel
+                            break
+
+                    first_lot_html = str(lot_containers[0])[:2000] if lot_containers else None
+
+                    results["first_auction_lot_page"] = {
+                        "url": first["url"],
+                        "html_length": len(str(lot_soup)),
+                        "matched_selector": matched_sel,
+                        "lot_containers_found": len(lot_containers),
+                        "first_lot_html": first_lot_html,
+                        "css_classes_sample": sorted(lot_classes)[:100],
+                    }
+            break  # stop after first successful auction page
 
         return results
 

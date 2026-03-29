@@ -413,7 +413,7 @@ class LangtonsScraper:
             "bottle_size":     bsize_text,
             "estimate_low":    est_lo,
             "estimate_high":   est_hi,
-            "realized_price":  realized,
+            "realized_price":  None,   # only set after auction closes; current bid ≠ realized
             "condition_notes": cond_text,
             "fill_level":      fill,
             "cellar_stored":   cellar,

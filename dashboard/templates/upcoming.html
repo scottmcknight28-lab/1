@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Upcoming Auction – Langton's Agent{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="fw-bold mb-0"><i class="bi bi-hammer me-2"></i>Upcoming Auction Strategy</h4>
+    <p class="text-muted small mb-0">{{ open_count }} open lots analysed against current strategy settings</p>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary"
+            onclick="apiPost('/api/scrape', this)">
+      <i class="bi bi-arrow-clockwise"></i> Refresh Lots
+    </button>
+    <a href="/strategy" class="btn btn-sm btn-outline-dark">
+      <i class="bi bi-sliders"></i> Edit Strategy
+    </a>
+  </div>
+</div>
+
+{% if not recommended and not not_recommended %}
+<div class="alert alert-info">
+  No open lots found in the database.
+  <button class="btn btn-sm btn-primary ms-2" onclick="apiPost('/api/scrape', this)">Scrape Langton's now</button>
+</div>
+{% endif %}
+
+{% if recommended %}
+<!-- Recommended lots -->
+<h5 class="mb-3 text-success">
+  <i class="bi bi-check-circle-fill me-1"></i>
+  Recommended Bids ({{ recommended|length }})
+</h5>
+
+{% for r in recommended %}
+<div class="card stat-card mb-3 border-start border-success border-3">
+  <div class="card-body">
+    <div class="row align-items-start">
+      <div class="col-md-7">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <span class="score-badge {% if r.score >= 0.6 %}score-high{% elif r.score >= 0.4 %}score-medium{% else %}score-low{% endif %}">
+            {{ "%.2f"|format(r.score) }}
+          </span>
+          <strong>{{ r.wine_name }}</strong>
+          <span class="text-muted">{{ r.vintage or 'NV' }}</span>
+        </div>
+        <div class="small text-muted mb-2">
+          {% if r.producer %}<i class="bi bi-person me-1"></i>{{ r.producer }}{% endif %}
+          {% if r.region %} &nbsp;·&nbsp; <i class="bi bi-geo-alt me-1"></i>{{ r.region }}{% endif %}
+        </div>
+        <ul class="list-unstyled small mb-0">
+          {% for reason in r.reasons %}
+          <li class="{{ 'text-warning' if 'WARNING' in reason else 'text-success' }}">
+            <i class="bi {{ 'bi-exclamation-triangle' if 'WARNING' in reason else 'bi-check2' }} me-1"></i>
+            {{ reason }}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div class="col-md-5 text-md-end mt-3 mt-md-0">
+        <div class="row g-2 justify-content-md-end">
+          <div class="col-4 col-md-auto">
+            <div class="text-muted small">Estimate</div>
+            <div class="fw-semibold">
+              {% if r.estimate_low and r.estimate_high %}
+                ${{ "%.0f"|format(r.estimate_low) }}–${{ "%.0f"|format(r.estimate_high) }}
+              {% else %}—{% endif %}
+            </div>
+          </div>
+          <div class="col-4 col-md-auto">
+            <div class="text-muted small">Market Avg</div>
+            <div class="fw-semibold">
+              {% if r.market_avg %}${{ "%.0f"|format(r.market_avg) }}{% else %}<span class="text-muted">No data</span>{% endif %}
+            </div>
+          </div>
+          <div class="col-4 col-md-auto">
+            <div class="text-muted small">Max Bid</div>
+            <div class="fw-bold text-success fs-5">
+              {% if r.max_bid %}${{ "%.0f"|format(r.max_bid) }}{% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if not_recommended %}
+<hr class="my-4">
+<h5 class="mb-3 text-muted">
+  <i class="bi bi-x-circle me-1"></i>
+  Not Recommended ({{ not_recommended|length }})
+</h5>
+<div class="card stat-card">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr><th>Wine</th><th>Vintage</th><th>Score</th><th>Reason</th></tr>
+      </thead>
+      <tbody>
+        {% for r in not_recommended %}
+        <tr>
+          <td class="small">{{ r.wine_name[:45] }}</td>
+          <td class="small">{{ r.vintage or 'NV' }}</td>
+          <td>
+            <span class="score-badge score-low">{{ "%.2f"|format(r.score) }}</span>
+          </td>
+          <td class="small text-muted">{{ r.reasons[0] if r.reasons else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.db-shm
+*.db-wal
+reports/
+*.egg-info
+.venv
+venv
+.DS_Store
+docker-compose.override.yml

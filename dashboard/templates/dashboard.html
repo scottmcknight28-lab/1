@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Langton's Agent{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="mb-0 fw-bold">Dashboard</h4>
+  <button class="btn btn-sm btn-outline-danger"
+          onclick="apiPost('/api/scrape', this); this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Scraping…'">
+    <i class="bi bi-arrow-clockwise"></i> Scrape Now
+  </button>
+</div>
+
+<!-- Stats -->
+<div class="row g-3 mb-4">
+  {% set cards = [
+    ('Auctions', stats.total_auctions, 'bi-archive'),
+    ('Total Lots', stats.total_lots, 'bi-list-ul'),
+    ('Open Lots', stats.active_lots, 'bi-hourglass-split'),
+    ('Recommendations', stats.total_recommendations, 'bi-bookmark-check'),
+  ] %}
+  {% for label, val, icon in cards %}
+  <div class="col-6 col-xl-3">
+    <div class="card stat-card h-100">
+      <div class="card-body d-flex align-items-center gap-3">
+        <i class="bi {{ icon }} fs-2 text-secondary"></i>
+        <div>
+          <div class="stat-num">{{ val }}</div>
+          <div class="text-muted small">{{ label }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="row g-3">
+  <!-- Schedule -->
+  <div class="col-lg-5">
+    <div class="card stat-card h-100">
+      <div class="card-body">
+        <h6 class="fw-bold mb-3"><i class="bi bi-calendar-event me-1"></i> Upcoming Jobs</h6>
+        {% if jobs %}
+        <ul class="list-group list-group-flush">
+          {% for job in jobs %}
+          <li class="list-group-item px-0 py-2 d-flex justify-content-between small">
+            <span class="text-muted">{{ job.name }}</span>
+            <span class="fw-semibold">{{ job.next_run }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted small mb-0">No scheduled jobs found.</p>
+        {% endif %}
+        <div class="mt-3 d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary"
+                  onclick="apiPost('/api/report/pre', this)">
+            <i class="bi bi-file-earmark-text"></i> Run Pre-Auction Report
+          </button>
+          <button class="btn btn-sm btn-outline-secondary"
+                  onclick="apiPost('/api/report/post', this)">
+            <i class="bi bi-file-earmark-bar-graph"></i> Run Post-Auction Report
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent recommendations -->
+  <div class="col-lg-7">
+    <div class="card stat-card h-100">
+      <div class="card-body">
+        <h6 class="fw-bold mb-3">
+          <i class="bi bi-bookmark-star me-1"></i> Recent Recommendations
+          <a href="/upcoming" class="float-end small fw-normal text-decoration-none">View all →</a>
+        </h6>
+        {% if recs %}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Wine</th><th>Vintage</th><th>Max Bid</th><th>Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in recs %}
+              <tr>
+                <td class="small">{{ r.wine_name[:40] }}</td>
+                <td class="small">{{ r.vintage or 'NV' }}</td>
+                <td class="small fw-semibold text-success">
+                  {% if r.recommended_max_bid %}${{ "%.0f"|format(r.recommended_max_bid) }}{% else %}—{% endif %}
+                </td>
+                <td>
+                  {% set s = r.value_score %}
+                  <span class="score-badge {% if s >= 0.6 %}score-high{% elif s >= 0.4 %}score-medium{% else %}score-low{% endif %}">
+                    {{ "%.2f"|format(s) }}
+                  </span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">
+          No recommendations yet. <a href="/upcoming">Analyse upcoming auction →</a>
+        </p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Top producers -->
+  {% if stats.top_producers %}
+  <div class="col-12">
+    <div class="card stat-card">
+      <div class="card-body">
+        <h6 class="fw-bold mb-3"><i class="bi bi-bar-chart me-1"></i> Top Producers by Lot Count</h6>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr><th>Producer</th><th>Lots Sold</th><th>Avg Realized</th><th>Min</th><th>Max</th></tr>
+            </thead>
+            <tbody>
+              {% for p in stats.top_producers %}
+              <tr>
+                <td class="small fw-semibold">{{ p.producer or '—' }}</td>
+                <td class="small">{{ p.lot_count }}</td>
+                <td class="small">{% if p.avg_realized %}${{ "%.0f"|format(p.avg_realized) }}{% else %}—{% endif %}</td>
+                <td class="small text-muted">{% if p.min_realized %}${{ "%.0f"|format(p.min_realized) }}{% else %}—{% endif %}</td>
+                <td class="small text-muted">{% if p.max_realized %}${{ "%.0f"|format(p.max_realized) }}{% else %}—{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

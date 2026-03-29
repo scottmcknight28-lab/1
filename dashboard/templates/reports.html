@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Reports – Langton's Agent{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="fw-bold mb-0"><i class="bi bi-file-text me-2"></i>Reports</h4>
+    <p class="text-muted small mb-0">Pre- and post-auction analysis reports</p>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary"
+            onclick="apiPost('/api/report/pre', this)">
+      <i class="bi bi-file-earmark-text"></i> Run Pre-Auction
+    </button>
+    <button class="btn btn-sm btn-outline-secondary"
+            onclick="apiPost('/api/report/post', this)">
+      <i class="bi bi-file-earmark-bar-graph"></i> Run Post-Auction
+    </button>
+  </div>
+</div>
+
+{% if not reports %}
+<div class="alert alert-info">
+  <i class="bi bi-info-circle me-1"></i>
+  No reports generated yet. Run a pre- or post-auction report to get started.
+</div>
+{% else %}
+<div class="card stat-card">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">Report</th>
+          <th>Type</th>
+          <th>Generated</th>
+          <th>Size</th>
+          <th class="pe-3 text-end">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in reports %}
+        <tr>
+          <td class="ps-3 small fw-semibold">{{ r.name }}</td>
+          <td>
+            {% if 'pre' in r.name %}
+            <span class="badge bg-primary">Pre-Auction</span>
+            {% elif 'post' in r.name %}
+            <span class="badge bg-success">Post-Auction</span>
+            {% else %}
+            <span class="badge bg-secondary">Report</span>
+            {% endif %}
+          </td>
+          <td class="small text-muted">{{ r.mtime }}</td>
+          <td class="small text-muted">{{ r.size_kb }} KB</td>
+          <td class="pe-3 text-end">
+            <a href="/reports/view/{{ r.name }}" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-2 me-1">
+              <i class="bi bi-eye"></i> View
+            </a>
+            <a href="/reports/download/{{ r.name }}" class="btn btn-xs btn-outline-dark btn-sm py-0 px-2">
+              <i class="bi bi-download"></i>
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Lot Browser – Langton's Agent{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://cdn.datatables.net/2.0.7/css/dataTables.bootstrap5.min.css">
+{% endblock %}
+
+{% block content %}
+<h4 class="fw-bold mb-4"><i class="bi bi-table me-2"></i>Lot Browser</h4>
+
+<!-- Filters -->
+<div class="card stat-card mb-3">
+  <div class="card-body py-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-sm-3">
+        <label class="form-label small mb-1">Wine / Name</label>
+        <input id="f-name" class="form-control form-control-sm" placeholder="e.g. Grange">
+      </div>
+      <div class="col-sm-2">
+        <label class="form-label small mb-1">Producer</label>
+        <input id="f-producer" class="form-control form-control-sm" placeholder="e.g. Penfolds">
+      </div>
+      <div class="col-sm-2">
+        <label class="form-label small mb-1">Region</label>
+        <input id="f-region" class="form-control form-control-sm" placeholder="e.g. Barossa">
+      </div>
+      <div class="col-sm-1">
+        <label class="form-label small mb-1">From</label>
+        <input id="f-min-v" type="number" class="form-control form-control-sm" placeholder="1990">
+      </div>
+      <div class="col-sm-1">
+        <label class="form-label small mb-1">To</label>
+        <input id="f-max-v" type="number" class="form-control form-control-sm" placeholder="2024">
+      </div>
+      <div class="col-sm-2">
+        <label class="form-label small mb-1">Auction</label>
+        <select id="f-auction" class="form-select form-select-sm">
+          <option value="">All auctions</option>
+          {% for a in auctions %}
+          <option value="{{ a.auction_id }}">{{ a.title[:40] }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-1">
+        <div class="form-check mt-3">
+          <input class="form-check-input" type="checkbox" id="f-open">
+          <label class="form-check-label small" for="f-open">Open only</label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card stat-card">
+  <div class="card-body">
+    <table id="lots-table" class="table table-sm table-hover w-100">
+      <thead class="table-light">
+        <tr>
+          <th>Lot #</th>
+          <th>Wine</th>
+          <th>Vintage</th>
+          <th>Producer</th>
+          <th>Region</th>
+          <th>Estimate</th>
+          <th>Realized</th>
+          <th>Fill</th>
+          <th>Auction</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/2.0.7/js/dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/2.0.7/js/dataTables.bootstrap5.min.js"></script>
+<script>
+  function fmtPrice(v) {
+    return v != null ? '$' + Math.round(v).toLocaleString() : '—';
+  }
+  function buildUrl() {
+    const p = new URLSearchParams();
+    const n  = $('#f-name').val().trim();
+    const pr = $('#f-producer').val().trim();
+    const rg = $('#f-region').val().trim();
+    const mn = $('#f-min-v').val().trim();
+    const mx = $('#f-max-v').val().trim();
+    const au = $('#f-auction').val();
+    const op = $('#f-open').prop('checked');
+    if (n)  p.set('wine_name', n);
+    if (pr) p.set('producer', pr);
+    if (rg) p.set('region', rg);
+    if (mn) p.set('min_vintage', mn);
+    if (mx) p.set('max_vintage', mx);
+    if (au) p.set('auction_id', au);
+    if (op) p.set('current_only', 'true');
+    return '/api/lots?' + p.toString();
+  }
+
+  const dt = $('#lots-table').DataTable({
+    ajax: { url: '/api/lots', dataSrc: 'lots' },
+    pageLength: 25,
+    order: [[8, 'desc'], [0, 'asc']],
+    columns: [
+      { data: 'lot_number', width: '55px' },
+      { data: 'wine_name', render: v => `<span title="${v}">${v.length>45?v.slice(0,44)+'…':v}</span>` },
+      { data: 'vintage',   defaultContent: 'NV', width: '70px' },
+      { data: 'producer',  defaultContent: '—' },
+      { data: 'region',    defaultContent: '—' },
+      { data: null, render: r => {
+          if (r.estimate_low && r.estimate_high)
+            return `$${Math.round(r.estimate_low).toLocaleString()}–$${Math.round(r.estimate_high).toLocaleString()}`;
+          return '—';
+        }
+      },
+      { data: 'realized_price', render: v => {
+          if (v == null) return '<span class="badge bg-warning text-dark">Open</span>';
+          return `<strong class="text-success">$${Math.round(v).toLocaleString()}</strong>`;
+        }
+      },
+      { data: 'fill_level', defaultContent: '—' },
+      { data: 'auction_title', render: v => v ? `<span class="small text-muted">${v.slice(0,30)}</span>` : '—' },
+    ],
+    language: { emptyTable: 'No lots found. Try adjusting your filters or scrape new data.' },
+  });
+
+  // Re-load on filter change (debounced)
+  let debounce;
+  function reloadTable() {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      dt.ajax.url(buildUrl()).load();
+    }, 400);
+  }
+  $('#f-name, #f-producer, #f-region, #f-min-v, #f-max-v').on('input', reloadTable);
+  $('#f-auction, #f-open').on('change', reloadTable);
+</script>
+{% endblock %}

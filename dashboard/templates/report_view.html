@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ filename }} – Langton's Agent{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="fw-bold mb-0"><i class="bi bi-file-text me-2"></i>{{ filename }}</h4>
+    <p class="text-muted small mb-0">
+      <a href="/reports" class="text-decoration-none">
+        <i class="bi bi-arrow-left me-1"></i>Back to Reports
+      </a>
+    </p>
+  </div>
+  <a href="/reports/download/{{ filename }}" class="btn btn-sm btn-outline-dark">
+    <i class="bi bi-download me-1"></i> Download
+  </a>
+</div>
+
+<div class="card stat-card">
+  <div class="card-body p-0">
+    <pre class="p-4 mb-0 small" style="white-space: pre-wrap; word-break: break-word; background: #1a1a2e; color: #e0e0e0; border-radius: .75rem; max-height: 80vh; overflow-y: auto; font-family: 'Courier New', monospace; line-height: 1.5;">{{ content }}</pre>
+  </div>
+</div>
+{% endblock %}

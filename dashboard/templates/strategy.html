@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Strategy Settings – Langton's Agent{% endblock %}
+
+{% block content %}
+<h4 class="fw-bold mb-1"><i class="bi bi-sliders me-2"></i>Strategy Settings</h4>
+<p class="text-muted small mb-4">Changes take effect immediately on the next evaluation.</p>
+
+{% if saved %}
+<div class="alert alert-success alert-dismissible fade show" role="alert">
+  <i class="bi bi-check-circle-fill me-1"></i> Settings saved successfully.
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<form method="post" action="/strategy">
+  <div class="row g-4">
+
+    <!-- Value & Budget -->
+    <div class="col-md-6">
+      <div class="card stat-card h-100">
+        <div class="card-body">
+          <h6 class="fw-bold mb-3"><i class="bi bi-currency-dollar me-1"></i> Value & Budget</h6>
+
+          <div class="mb-3">
+            <label class="form-label" for="vtp">
+              Value threshold
+              <span class="text-muted small">(% below market average to trigger a bid)</span>
+            </label>
+            <div class="input-group">
+              <input type="number" class="form-control" id="vtp" name="value_threshold_pct"
+                     value="{{ value_threshold_pct }}" min="0" max="100" step="1" required>
+              <span class="input-group-text">%</span>
+            </div>
+            <div class="form-text">e.g. 15 means only bid when estimate is ≥15% below historical average.</div>
+          </div>
+
+          <div class="mb-0">
+            <label class="form-label" for="mba">Maximum bid per lot (AUD)</label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input type="number" class="form-control" id="mba" name="max_bid_amount"
+                     value="{{ max_bid_amount }}" min="0" step="10" required>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Focus -->
+    <div class="col-md-6">
+      <div class="card stat-card h-100">
+        <div class="card-body">
+          <h6 class="fw-bold mb-3"><i class="bi bi-funnel me-1"></i> Producer & Region Focus</h6>
+          <p class="small text-muted">
+            One entry per line, partial match. Leave blank to consider all.
+          </p>
+          <div class="mb-3">
+            <label class="form-label" for="pp">Preferred Producers</label>
+            <textarea class="form-control font-monospace small" id="pp" name="preferred_producers"
+                      rows="5" placeholder="Penfolds&#10;Henschke&#10;Leeuwin Estate">{{ preferred_producers }}</textarea>
+          </div>
+          <div class="mb-0">
+            <label class="form-label" for="pr">Preferred Regions</label>
+            <textarea class="form-control font-monospace small" id="pr" name="preferred_regions"
+                      rows="5" placeholder="Barossa Valley&#10;Eden Valley&#10;Margaret River">{{ preferred_regions }}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Condition -->
+    <div class="col-12">
+      <div class="card stat-card">
+        <div class="card-body">
+          <h6 class="fw-bold mb-3"><i class="bi bi-award me-1"></i> Provenance & Condition Requirements</h6>
+          <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label" for="mfl">Minimum fill level</label>
+              <select class="form-select" id="mfl" name="min_fill_level">
+                <option value="" {% if not min_fill_level %}selected{% endif %}>No minimum</option>
+                {% for level in ['into neck','base of neck','top shoulder','upper shoulder','mid shoulder','lower shoulder'] %}
+                <option value="{{ level }}" {% if min_fill_level == level %}selected{% endif %}>
+                  {{ level|capitalize }}
+                </option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Lots below this fill will be penalised or excluded.</div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" role="switch" id="rcs"
+                       name="require_cellar_stored" {% if require_cellar_stored %}checked{% endif %}>
+                <label class="form-check-label" for="rcs">
+                  Require cellar-stored provenance
+                </label>
+              </div>
+              <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" role="switch" id="roc"
+                       name="require_original_carton" {% if require_original_carton %}checked{% endif %}>
+                <label class="form-check-label" for="roc">
+                  Require original carton
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="mt-4 d-flex gap-2">
+    <button type="submit" class="btn btn-danger px-4">
+      <i class="bi bi-save me-1"></i> Save Settings
+    </button>
+    <a href="/" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

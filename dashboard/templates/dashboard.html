@@ -4,10 +4,16 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h4 class="mb-0 fw-bold">Dashboard</h4>
-  <button class="btn btn-sm btn-outline-danger"
-          onclick="apiPost('/api/scrape', this); this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Scraping…'">
-    <i class="bi bi-arrow-clockwise"></i> Scrape Now
-  </button>
+  <div class="d-flex gap-2">
+    <a href="/api/scrape/debug" target="_blank" class="btn btn-sm btn-outline-secondary"
+       title="Open scraper diagnostics in a new tab">
+      <i class="bi bi-bug"></i> Debug
+    </a>
+    <button class="btn btn-sm btn-outline-danger" id="scrapeBtn"
+            onclick="runScrape(this)">
+      <i class="bi bi-arrow-clockwise"></i> Scrape Now
+    </button>
+  </div>
 </div>
 
 <!-- Stats -->
@@ -138,4 +144,28 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function runScrape(btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Scraping…';
+  try {
+    const r = await fetch('/api/scrape', {method:'POST'});
+    const d = await r.json();
+    const type = d.status === 'ok' ? 'success' : (d.status === 'warning' ? 'warning' : 'danger');
+    showToast(d.message || 'Done.', type);
+    if (d.status === 'ok' && d.lots_saved > 0) {
+      setTimeout(() => location.reload(), 1500);
+    }
+  } catch(e) {
+    showToast('Request failed: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+</script>
 {% endblock %}

@@ -27,14 +27,7 @@ class AuctionDatabase:
     # ------------------------------------------------------------------
 
     def _init_schema(self) -> None:
-        # Remove duplicate lots (keep lowest id per lot_url) before creating unique index.
-        self.conn.executescript("""
-            DELETE FROM lots WHERE id NOT IN (
-                SELECT MIN(id) FROM lots
-                WHERE lot_url IS NOT NULL AND lot_url != ''
-                GROUP BY lot_url
-            ) AND lot_url IS NOT NULL AND lot_url != '';
-        """)
+        # Step 1: create tables and non-unique indexes
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS auctions (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +52,6 @@ class AuctionDatabase:
                 estimate_low    REAL,
                 estimate_high   REAL,
                 realized_price  REAL,
-                -- provenance / condition
                 condition_notes TEXT,
                 fill_level      TEXT,
                 cellar_stored   INTEGER DEFAULT 0,
@@ -74,18 +66,31 @@ class AuctionDatabase:
                 lot_id              INTEGER NOT NULL,
                 recommended_max_bid REAL,
                 value_score         REAL,
-                reasons             TEXT,   -- JSON array of strings
+                reasons             TEXT,
                 created_at          TEXT,
                 FOREIGN KEY (lot_id) REFERENCES lots(id)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_lots_auction   ON lots(auction_id);
-            CREATE INDEX IF NOT EXISTS idx_lots_producer  ON lots(producer);
-            CREATE INDEX IF NOT EXISTS idx_lots_region    ON lots(region);
-            CREATE INDEX IF NOT EXISTS idx_lots_wine      ON lots(wine_name);
-            CREATE INDEX IF NOT EXISTS idx_lots_vintage   ON lots(vintage);
-            -- Unique index on lot_url so re-scraping upserts rather than duplicates.
-            -- Partial: only where lot_url is non-empty (SQLite NULLs never conflict).
+            CREATE INDEX IF NOT EXISTS idx_lots_auction  ON lots(auction_id);
+            CREATE INDEX IF NOT EXISTS idx_lots_producer ON lots(producer);
+            CREATE INDEX IF NOT EXISTS idx_lots_region   ON lots(region);
+            CREATE INDEX IF NOT EXISTS idx_lots_wine     ON lots(wine_name);
+            CREATE INDEX IF NOT EXISTS idx_lots_vintage  ON lots(vintage);
+        """)
+
+        # Step 2: remove duplicate lot_url rows before adding unique index
+        # (migration for existing databases that used plain INSERT)
+        self.conn.executescript("""
+            DELETE FROM lots
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM lots
+                WHERE lot_url IS NOT NULL AND lot_url != ''
+                GROUP BY lot_url
+            ) AND lot_url IS NOT NULL AND lot_url != '';
+        """)
+
+        # Step 3: unique index on lot_url (partial – only non-empty values)
+        self.conn.executescript("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_lots_url
                 ON lots(lot_url) WHERE lot_url IS NOT NULL AND lot_url != '';
         """)
@@ -156,9 +161,12 @@ class AuctionDatabase:
             lot,
         )
         self.conn.commit()
-        return cur.lastrowid or self.conn.execute(  # type: ignore[return-value]
+        if cur.lastrowid:
+            return cur.lastrowid  # type: ignore[return-value]
+        row = self.conn.execute(
             "SELECT id FROM lots WHERE lot_url = ?", (lot.get("lot_url"),)
-        ).fetchone()[0]
+        ).fetchone()
+        return row[0] if row else 0
 
     def search_lots(
         self,

@@ -343,18 +343,22 @@ class LangtonsScraper:
             if m:
                 lot_number = m.group(1)
 
-        # ── Producer & region ─────────────────────────────────────────
-        # Langton's format: "PRODUCER [classification], Region YYYY Format"
-        # e.g. "CHATEAU LATOUR 1er cru classe, Pauillac 2008 Bottle"
-        producer = self._text(el, _SELECTORS["producer"])
-        region   = self._text(el, _SELECTORS["region"]) or ""
-        if not producer or not region:
-            inferred_producer, inferred_region = self._parse_langtons_name(wine_name)
-            producer = producer or inferred_producer
-            region   = region   or inferred_region
+        # ── Parse the Langton's naming convention ────────────────────
+        # raw wine_name = "PRODUCER label, Region YYYY Format" (from img alt)
+        parsed_producer, wine_label, varietal, parsed_region = \
+            self._parse_langtons_name(wine_name)
 
-        varietal = self._text(el, _SELECTORS["varietal"]) or ""
-        vintage  = self._parse_vintage(wine_name)
+        # Store a clean, title-cased wine_name (producer + label, no region/vintage)
+        if parsed_producer and wine_label:
+            wine_name = f"{parsed_producer} {wine_label}"
+        elif wine_label:
+            wine_name = wine_label
+
+        producer = (self._text(el, _SELECTORS["producer"]) or parsed_producer
+                    or self._infer_producer(wine_name))
+        region   = self._text(el, _SELECTORS["region"]) or parsed_region or ""
+        varietal = self._text(el, _SELECTORS["varietal"]) or varietal or ""
+        vintage  = self._parse_vintage(wine_name) or self._parse_vintage(wine_label)
 
         # ── Bottle format & quantity ──────────────────────────────────
         # Format (Bottle / Magnum etc.) is the last word in wine_name
@@ -428,15 +432,15 @@ class LangtonsScraper:
             if m:
                 lot_number = m.group(1)
 
-        producer    = self._text(soup, _SELECTORS["producer"])
-        region      = self._text(soup, _SELECTORS["region"]) or ""
-        if not producer or not region:
-            p, r = self._parse_langtons_name(wine_name)
-            producer = producer or p
-            region   = region   or r
+        parsed_prod, wine_label, varietal_parsed, parsed_region = \
+            self._parse_langtons_name(wine_name)
+        if parsed_prod and wine_label:
+            wine_name = f"{parsed_prod} {wine_label}"
 
-        varietal    = self._text(soup, _SELECTORS["varietal"]) or ""
-        vintage     = self._parse_vintage(wine_name)
+        producer = self._text(soup, _SELECTORS["producer"]) or parsed_prod or ""
+        region   = self._text(soup, _SELECTORS["region"])   or parsed_region or ""
+        varietal = self._text(soup, _SELECTORS["varietal"]) or varietal_parsed or ""
+        vintage  = self._parse_vintage(wine_name)
 
         est_text    = self._text(soup, _SELECTORS["estimate"])
         est_lo, est_hi = self._parse_estimate(est_text)
@@ -497,26 +501,66 @@ class LangtonsScraper:
         )
 
     @staticmethod
-    def _parse_langtons_name(wine_name: str) -> tuple[str, str]:
+    def _parse_langtons_name(full_name: str) -> tuple[str, str, str, str]:
         """
-        Parse Langton's wine name convention into (producer, region).
+        Parse Langton's wine name convention into (producer, wine_label, varietal, region).
 
-        Format observed: "PRODUCER [classification], Region YYYY Format"
-        e.g. "CHATEAU LATOUR 1er cru classe, Pauillac 2008 Bottle"
-             "PENFOLDS Grange, Barossa Valley 2018 Bottle"
-             "GIACONDA Chardonnay, Beechworth 2021 Bottle"
+        Langton's format: "ALL_CAPS_PRODUCER mixed case label, Region YYYY Format"
+
+        Examples:
+          "PENFOLDS Bin 820 Cabernet Shiraz, Coonawarra 2019 Bottle"
+            -> ("Penfolds", "Bin 820 Cabernet Shiraz", "Cabernet Shiraz", "Coonawarra")
+          "CHATEAU LATOUR 1er cru classe, Pauillac 2008 Bottle"
+            -> ("Chateau Latour", "1er cru classe", "", "Pauillac")
+          "GIACONDA Chardonnay, Beechworth 2021 Bottle"
+            -> ("Giaconda", "Chardonnay", "Chardonnay", "Beechworth")
+          "HENSCHKE Hill of Grace, Eden Valley 2020 Bottle"
+            -> ("Henschke", "Hill of Grace", "", "Eden Valley")
         """
-        if "," in wine_name:
-            producer_part, rest = wine_name.split(",", 1)
-            producer = producer_part.strip().title()
-            # Region = first alphabetic words before the vintage year
-            m = re.match(r"\s*([A-Za-z][A-Za-z\s\-\']*?)(?:\s+\d{4}|\s*$)", rest)
+        # ── 1. Split region off after the comma ───────────────────────
+        if "," in full_name:
+            name_part, region_part = full_name.split(",", 1)
+            m = re.match(r"\s*([A-Za-z][A-Za-z\s\-\'\.]*?)(?:\s+\d{4}|\s*$)", region_part)
             region = m.group(1).strip() if m else ""
         else:
-            # No comma — try first two capitalised words as producer
-            producer = ""
-            region   = ""
-        return producer, region
+            name_part = full_name
+            region = ""
+
+        # ── 2. Identify ALL-CAPS producer prefix ──────────────────────
+        # A "producer word" is any token whose alpha characters are all uppercase.
+        words = name_part.strip().split()
+        producer_words: list[str] = []
+        label_words: list[str] = []
+        in_producer = True
+        for word in words:
+            alpha = re.sub(r"[^A-Za-z]", "", word)
+            if in_producer and alpha and alpha.isupper() and len(alpha) >= 2:
+                producer_words.append(word)
+            else:
+                in_producer = False
+                label_words.append(word)
+
+        producer   = " ".join(producer_words).title() if producer_words else ""
+        wine_label = " ".join(label_words)
+
+        # ── 3. Extract varietal from the wine label ───────────────────
+        # Ordered longest-first so "Cabernet Sauvignon" beats "Cabernet".
+        _VARIETALS = [
+            "Cabernet Sauvignon", "Cabernet Shiraz", "Cabernet Merlot",
+            "Shiraz Viognier", "Pinot Noir", "Sauvignon Blanc",
+            "Pinot Gris", "Pinot Grigio",
+            "Shiraz", "Chardonnay", "Riesling", "Semillon", "Sémillon",
+            "Merlot", "Grenache", "Tempranillo", "Verdelho", "Viognier",
+            "Cabernet", "Syrah",
+        ]
+        varietal = ""
+        label_lower = wine_label.lower()
+        for v in _VARIETALS:
+            if v.lower() in label_lower:
+                varietal = v
+                break
+
+        return producer, wine_label, varietal, region
 
     @staticmethod
     def _parse_vintage(text: Optional[str]) -> Optional[int]:

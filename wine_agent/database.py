@@ -27,6 +27,14 @@ class AuctionDatabase:
     # ------------------------------------------------------------------
 
     def _init_schema(self) -> None:
+        # Remove duplicate lots (keep lowest id per lot_url) before creating unique index.
+        self.conn.executescript("""
+            DELETE FROM lots WHERE id NOT IN (
+                SELECT MIN(id) FROM lots
+                WHERE lot_url IS NOT NULL AND lot_url != ''
+                GROUP BY lot_url
+            ) AND lot_url IS NOT NULL AND lot_url != '';
+        """)
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS auctions (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,6 +84,10 @@ class AuctionDatabase:
             CREATE INDEX IF NOT EXISTS idx_lots_region    ON lots(region);
             CREATE INDEX IF NOT EXISTS idx_lots_wine      ON lots(wine_name);
             CREATE INDEX IF NOT EXISTS idx_lots_vintage   ON lots(vintage);
+            -- Unique index on lot_url so re-scraping upserts rather than duplicates.
+            -- Partial: only where lot_url is non-empty (SQLite NULLs never conflict).
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_lots_url
+                ON lots(lot_url) WHERE lot_url IS NOT NULL AND lot_url != '';
         """)
         self.conn.commit()
 
@@ -124,11 +136,29 @@ class AuctionDatabase:
                 :condition_notes, :fill_level, :cellar_stored, :original_carton,
                 :provenance, :lot_url
             )
+            ON CONFLICT(lot_url) DO UPDATE SET
+                wine_name       = excluded.wine_name,
+                producer        = excluded.producer,
+                vintage         = excluded.vintage,
+                region          = excluded.region,
+                varietal        = excluded.varietal,
+                bottle_count    = excluded.bottle_count,
+                bottle_size     = excluded.bottle_size,
+                estimate_low    = excluded.estimate_low,
+                estimate_high   = excluded.estimate_high,
+                realized_price  = COALESCE(excluded.realized_price, lots.realized_price),
+                condition_notes = excluded.condition_notes,
+                fill_level      = excluded.fill_level,
+                cellar_stored   = excluded.cellar_stored,
+                original_carton = excluded.original_carton,
+                provenance      = excluded.provenance
             """,
             lot,
         )
         self.conn.commit()
-        return cur.lastrowid  # type: ignore[return-value]
+        return cur.lastrowid or self.conn.execute(  # type: ignore[return-value]
+            "SELECT id FROM lots WHERE lot_url = ?", (lot.get("lot_url"),)
+        ).fetchone()[0]
 
     def search_lots(
         self,

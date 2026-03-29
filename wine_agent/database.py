@@ -126,6 +126,40 @@ class AuctionDatabase:
     # ------------------------------------------------------------------
 
     def upsert_lot(self, lot: dict) -> int:
+        lot_url = (lot.get("lot_url") or "").strip()
+
+        if lot_url:
+            existing = self.conn.execute(
+                "SELECT id FROM lots WHERE lot_url = ?", (lot_url,)
+            ).fetchone()
+            if existing:
+                self.conn.execute(
+                    """
+                    UPDATE lots SET
+                        auction_id      = :auction_id,
+                        lot_number      = :lot_number,
+                        wine_name       = :wine_name,
+                        producer        = :producer,
+                        vintage         = :vintage,
+                        region          = :region,
+                        varietal        = :varietal,
+                        bottle_count    = :bottle_count,
+                        bottle_size     = :bottle_size,
+                        estimate_low    = :estimate_low,
+                        estimate_high   = :estimate_high,
+                        realized_price  = COALESCE(:realized_price, realized_price),
+                        condition_notes = :condition_notes,
+                        fill_level      = :fill_level,
+                        cellar_stored   = :cellar_stored,
+                        original_carton = :original_carton,
+                        provenance      = :provenance
+                    WHERE lot_url = :lot_url
+                    """,
+                    lot,
+                )
+                self.conn.commit()
+                return existing[0]
+
         cur = self.conn.execute(
             """
             INSERT INTO lots (
@@ -141,32 +175,11 @@ class AuctionDatabase:
                 :condition_notes, :fill_level, :cellar_stored, :original_carton,
                 :provenance, :lot_url
             )
-            ON CONFLICT(lot_url) DO UPDATE SET
-                wine_name       = excluded.wine_name,
-                producer        = excluded.producer,
-                vintage         = excluded.vintage,
-                region          = excluded.region,
-                varietal        = excluded.varietal,
-                bottle_count    = excluded.bottle_count,
-                bottle_size     = excluded.bottle_size,
-                estimate_low    = excluded.estimate_low,
-                estimate_high   = excluded.estimate_high,
-                realized_price  = COALESCE(excluded.realized_price, lots.realized_price),
-                condition_notes = excluded.condition_notes,
-                fill_level      = excluded.fill_level,
-                cellar_stored   = excluded.cellar_stored,
-                original_carton = excluded.original_carton,
-                provenance      = excluded.provenance
             """,
             lot,
         )
         self.conn.commit()
-        if cur.lastrowid:
-            return cur.lastrowid  # type: ignore[return-value]
-        row = self.conn.execute(
-            "SELECT id FROM lots WHERE lot_url = ?", (lot.get("lot_url"),)
-        ).fetchone()
-        return row[0] if row else 0
+        return cur.lastrowid or 0
 
     def search_lots(
         self,

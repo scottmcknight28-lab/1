@@ -312,39 +312,81 @@ class LangtonsScraper:
         return lots
 
     def _extract_lot_fields(self, el: Tag, auction_id: str) -> Optional[dict]:
+        # ── Wine name ─────────────────────────────────────────────────
+        # Langton's tiles: wine name lives in img.tile-image[alt], e.g.
+        # "CHATEAU LATOUR 1er cru classe, Pauillac 2008 Bottle"
         wine_name = self._text(el, _SELECTORS["wine_name"])
+        if not wine_name:
+            img = el.select_one("img.tile-image, a.js-pdp-link img, a.pdp-link-anchor img")
+            if img:
+                wine_name = img.get("alt", "").strip()
         if not wine_name:
             return None
 
-        lot_number  = self._text(el, _SELECTORS["lot_number"]) or ""
-        producer    = self._text(el, _SELECTORS["producer"])
-        region      = self._text(el, _SELECTORS["region"]) or ""
-        varietal    = self._text(el, _SELECTORS["varietal"]) or ""
-        vintage     = self._parse_vintage(wine_name)
+        # ── Lot URL & number ──────────────────────────────────────────
+        # PDP link: /p/wine-slug/auc-var-26869507.html
+        lot_url = ""
+        pdp = el.select_one("a.js-pdp-link, a.pdp-link-anchor, a[class*='pdp-link']")
+        if pdp:
+            href = pdp.get("href", "")
+            lot_url = href if href.startswith("http") else self.base_url + href
+        else:
+            link = el.find("a", href=True)
+            if link:
+                href = link["href"]
+                lot_url = href if href.startswith("http") else self.base_url + href
 
-        est_text    = self._text(el, _SELECTORS["estimate"])
+        # Lot number from URL: auc-var-NNNNNN
+        lot_number = self._text(el, _SELECTORS["lot_number"]) or ""
+        if not lot_number:
+            m = re.search(r"auc-var-(\d+)", lot_url)
+            if m:
+                lot_number = m.group(1)
+
+        # ── Producer & region ─────────────────────────────────────────
+        # Langton's format: "PRODUCER [classification], Region YYYY Format"
+        # e.g. "CHATEAU LATOUR 1er cru classe, Pauillac 2008 Bottle"
+        producer = self._text(el, _SELECTORS["producer"])
+        region   = self._text(el, _SELECTORS["region"]) or ""
+        if not producer or not region:
+            inferred_producer, inferred_region = self._parse_langtons_name(wine_name)
+            producer = producer or inferred_producer
+            region   = region   or inferred_region
+
+        varietal = self._text(el, _SELECTORS["varietal"]) or ""
+        vintage  = self._parse_vintage(wine_name)
+
+        # ── Bottle format & quantity ──────────────────────────────────
+        # Format (Bottle / Magnum etc.) is the last word in wine_name
+        bsize_text = self._text(el, _SELECTORS["bottle_size"]) or ""
+        if not bsize_text:
+            last_word = wine_name.split()[-1] if wine_name else ""
+            if last_word.lower() in ("bottle", "magnum", "jeroboam", "imperiale",
+                                      "methuselah", "half", "double"):
+                bsize_text = last_word
+        bsize_text = bsize_text or "750ml"
+
+        qty_text = self._text(el, _SELECTORS["quantity"]) or ""
+        qty = self._parse_quantity(qty_text) or 1
+
+        # ── Closing date (open = no realized price yet) ───────────────
+        countdown = el.select_one(".countdown[data-end-date]")
+        closing_raw = countdown.get("data-end-date", "") if countdown else ""
+
+        # ── Prices ───────────────────────────────────────────────────
+        est_text   = self._text(el, _SELECTORS["estimate"])
         est_lo, est_hi = self._parse_estimate(est_text)
 
-        # For open lots: current bid; for closed: realized price
-        real_text   = self._text(el, _SELECTORS["realized"])
+        real_text  = self._text(el, _SELECTORS["realized"])
         if not real_text:
             real_text = self._text(el, _SELECTORS["current_bid"])
-        realized    = self._parse_price(real_text)
+        realized   = self._parse_price(real_text)
 
-        cond_text   = self._text(el, _SELECTORS["condition"]) or ""
-        fill        = self._parse_fill_level(cond_text)
-        cellar      = 1 if re.search(r"cellar.?stor|professionally stor", cond_text, re.I) else 0
-        oc          = 1 if re.search(r"\bOC\b|OWC|original.?carton", cond_text) else 0
-
-        lot_url = ""
-        link = el.find("a", href=True)
-        if link:
-            href = link["href"]
-            lot_url = href if href.startswith("http") else self.base_url + href
-
-        bsize_text = self._text(el, _SELECTORS["bottle_size"]) or "750ml"
-        qty_text   = self._text(el, _SELECTORS["quantity"]) or ""
-        qty = self._parse_quantity(qty_text) or 1
+        # ── Condition / provenance ────────────────────────────────────
+        cond_text = self._text(el, _SELECTORS["condition"]) or ""
+        fill      = self._parse_fill_level(cond_text)
+        cellar    = 1 if re.search(r"cellar.?stor|professionally stor", cond_text, re.I) else 0
+        oc        = 1 if re.search(r"\bOC\b|OWC|original.?carton", cond_text) else 0
 
         return {
             "auction_id":      auction_id,
@@ -365,6 +407,7 @@ class LangtonsScraper:
             "original_carton": oc,
             "provenance":      cond_text,
             "lot_url":         lot_url,
+            "closing_date":    closing_raw,
         }
 
     # ------------------------------------------------------------------
@@ -373,9 +416,25 @@ class LangtonsScraper:
 
     def _parse_lot_detail(self, soup: BeautifulSoup, auction_id: str, lot_url: str) -> dict:
         wine_name   = self._text(soup, ["h1.product-name", "h1.lot-title", "h1", ".wine-title"]) or ""
+        # Fallback: page title's og:title meta
+        if not wine_name:
+            og = soup.find("meta", property="og:title")
+            if og:
+                wine_name = og.get("content", "").strip()
+
         lot_number  = self._text(soup, _SELECTORS["lot_number"]) or ""
+        if not lot_number:
+            m = re.search(r"auc-var-(\d+)", lot_url)
+            if m:
+                lot_number = m.group(1)
+
         producer    = self._text(soup, _SELECTORS["producer"])
         region      = self._text(soup, _SELECTORS["region"]) or ""
+        if not producer or not region:
+            p, r = self._parse_langtons_name(wine_name)
+            producer = producer or p
+            region   = region   or r
+
         varietal    = self._text(soup, _SELECTORS["varietal"]) or ""
         vintage     = self._parse_vintage(wine_name)
 
@@ -436,6 +495,28 @@ class LangtonsScraper:
                 ".show-more, [class*='load-more']"
             )
         )
+
+    @staticmethod
+    def _parse_langtons_name(wine_name: str) -> tuple[str, str]:
+        """
+        Parse Langton's wine name convention into (producer, region).
+
+        Format observed: "PRODUCER [classification], Region YYYY Format"
+        e.g. "CHATEAU LATOUR 1er cru classe, Pauillac 2008 Bottle"
+             "PENFOLDS Grange, Barossa Valley 2018 Bottle"
+             "GIACONDA Chardonnay, Beechworth 2021 Bottle"
+        """
+        if "," in wine_name:
+            producer_part, rest = wine_name.split(",", 1)
+            producer = producer_part.strip().title()
+            # Region = first alphabetic words before the vintage year
+            m = re.match(r"\s*([A-Za-z][A-Za-z\s\-\']*?)(?:\s+\d{4}|\s*$)", rest)
+            region = m.group(1).strip() if m else ""
+        else:
+            # No comma — try first two capitalised words as producer
+            producer = ""
+            region   = ""
+        return producer, region
 
     @staticmethod
     def _parse_vintage(text: Optional[str]) -> Optional[int]:

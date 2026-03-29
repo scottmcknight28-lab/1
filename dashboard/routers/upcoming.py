@@ -144,7 +144,7 @@ async def api_scrape_debug(request: Request):
                             matched_sel = sel
                             break
 
-                    first_lot_html = str(lot_containers[0])[:2000] if lot_containers else None
+                    first_lot_html = str(lot_containers[0])[:5000] if lot_containers else None
 
                     results["first_auction_lot_page"] = {
                         "url": first["url"],

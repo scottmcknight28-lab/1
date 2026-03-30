@@ -19,7 +19,7 @@ import re
 import time
 from datetime import datetime
 from typing import Optional
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse, unquote_plus
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlparse, urlunparse, unquote_plus
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -116,7 +116,7 @@ FILL_LEVELS = [
 # Slugs that appear in /auctions/ paths but are NOT individual auctions
 _SKIP_SLUGS = {
     "past", "results", "current", "archive", "upcoming",
-    "featured-wine-brands", "australia", "france", "burgundy",
+    "australia", "france", "burgundy",
     "bordeaux", "champagne", "rhone", "italy",
 }
 
@@ -150,25 +150,33 @@ class LangtonsScraper:
     _PAGE_SZ = 60
 
     def get_auctions(self) -> list[dict]:
-        """Return a list of current auctions from Langton's."""
+        """Return a list of current auctions from Langton's.
+
+        Discovery strategy:
+        1. Slug-based featured pages (/auctions/top-wine-regions etc.)
+        2. Current-week auction URLs derived from past auction_id_hrefs in the
+           server-rendered HTML.  SFCC refinement links are JS-loaded, so we
+           reverse-engineer them from the previous week's pattern links.
+        3. Closed-auction endpoint for post-auction results.
+        """
         auctions: list[dict] = []
         seen: set[str] = set()
 
-        # Fetch plain /auctions — this page has the auctionId refinement panel
-        # listing all live auctions. Do NOT add cgid= as that switches to
-        # product-listing mode and breaks the refinement panel.
-        for path in ["/auctions", "/auctions.html"]:
-            soup = self._fetch(self.base_url + path)
-            if soup is None:
-                continue
-            for item in self._find_auction_refinements(soup):
+        soup = self._fetch(self.base_url + "/auctions.html")
+        if soup is not None:
+            # 1. Slug pages (featured-wine-brands, top-wine-regions, …)
+            for item in self._find_auction_links(soup):
                 if item["auction_id"] not in seen:
                     seen.add(item["auction_id"])
                     auctions.append(item)
-            if auctions:
-                break  # found refinements — don't try the fallback URL
 
-        # Also check the closed/past auction endpoint
+            # 2. Weekly auctions — derive current-week URLs from past patterns
+            for item in self._generate_current_auction_urls(soup):
+                if item["auction_id"] not in seen:
+                    seen.add(item["auction_id"])
+                    auctions.append(item)
+
+        # 3. Closed-auction endpoint
         closed_url = self.base_url + f"{_DW_BASE}/Auction-ClosedAuction?auctionStatus=Closed"
         closed_soup = self._fetch(closed_url)
         if closed_soup:
@@ -286,6 +294,102 @@ class LangtonsScraper:
                 "scraped_at":   datetime.now().isoformat(),
             })
 
+        return results
+
+    def _generate_current_auction_urls(self, soup: BeautifulSoup) -> list[dict]:
+        """
+        Generate current-week auction lot-listing URLs.
+
+        SFCC renders the auctionId refinement panel via JavaScript, so the live
+        filter links are not in the server HTML.  However, the page *does* contain
+        server-rendered links to last week's same-day auctions, formatted as:
+
+          /auctions?…&prefv1=YYYY-MM-DD%3B+DD+DAY%3A+Name|…&srule=…
+
+        We parse those to extract (day_abbr, name) patterns, then build the
+        equivalent URLs for the upcoming occurrence of each weekday.
+        """
+        from datetime import date, timedelta
+
+        today = date.today()
+
+        _DAY_TO_WEEKDAY = {
+            "MON": 0, "TUE": 1, "WED": 2, "THU": 3,
+            "FRI": 4, "SAT": 5, "SUN": 6,
+        }
+
+        # Collect unique (day_abbr, name) pairs from all pipe-separated prefv1 values
+        seen_pairs: set[tuple[str, str]] = set()
+        auction_types: list[tuple[str, str]] = []
+
+        for a in soup.find_all("a", href=True):
+            href: str = a["href"]
+            if "auctionId" not in href:
+                continue
+            m = re.search(r"prefv\d+=([^&]+)", href)
+            if not m:
+                continue
+            raw_prefv = unquote_plus(m.group(1))
+            for part in raw_prefv.split("|"):
+                part = part.strip()
+                # Expected format: "YYYY-MM-DD; DD DAY: Auction Name"
+                m2 = re.match(r"\d{4}-\d{2}-\d{2};\s*\d+\s+(\w{2,3}):\s*(.+)", part)
+                if not m2:
+                    continue
+                day_abbr = m2.group(1).upper()
+                name = m2.group(2).strip()
+                if day_abbr not in _DAY_TO_WEEKDAY:
+                    continue
+                key = (day_abbr, name)
+                if key not in seen_pairs:
+                    seen_pairs.add(key)
+                    auction_types.append(key)
+
+        if not auction_types:
+            logger.debug("No past auction_id_hrefs found; weekly auction discovery skipped")
+            return []
+
+        def upcoming_date_for(day_abbr: str) -> date:
+            """Return the next occurrence of day_abbr's weekday, including today."""
+            target_wd = _DAY_TO_WEEKDAY[day_abbr]
+            days_ahead = (target_wd - today.weekday()) % 7
+            return today + timedelta(days=days_ahead)
+
+        results: list[dict] = []
+        seen_ids: set[str] = set()
+
+        for day_abbr, name in auction_types:
+            auction_date = upcoming_date_for(day_abbr)
+            day_num  = auction_date.day
+            date_str = auction_date.strftime("%Y-%m-%d")
+
+            # Reconstruct the exact SFCC auction ID string
+            auction_id_str = f"{date_str}; {day_num} {day_abbr}: {name}"
+
+            # Slugified key for our database (stable, human-readable)
+            auction_id = re.sub(r"[^a-z0-9-]", "-", auction_id_str.lower())[:60].strip("-")
+
+            if auction_id in seen_ids:
+                continue
+            seen_ids.add(auction_id)
+
+            url = (
+                f"{self.base_url}/auctions"
+                f"?cgid=cat-l1-auctions"
+                f"&prefn1=auctionId"
+                f"&prefv1={quote_plus(auction_id_str)}"
+                f"&sz={self._PAGE_SZ}"
+            )
+
+            results.append({
+                "auction_id":   auction_id,
+                "title":        f"{day_num} {day_abbr}: {name}",
+                "auction_date": date_str,
+                "url":          url,
+                "scraped_at":   datetime.now().isoformat(),
+            })
+
+        logger.info("Generated %d current-week auction URLs from past patterns", len(results))
         return results
 
     def _find_auction_links(self, soup: BeautifulSoup) -> list[dict]:

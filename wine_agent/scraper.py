@@ -1,16 +1,17 @@
 """
 Web scraper for Langton's Fine Wine Auctions (langtons.com.au).
 
-The site runs on Salesforce Commerce Cloud (Demandware).
-Key URL patterns discovered:
-  - Auction listing:   /auctions.html
-  - Closed results:    /on/demandware.store/Sites-langtons-Site/en_AU/
-                         Auction-ClosedAuction?auctionStatus=Closed
-  - Individual lots:   links found inside .auction-tile elements
+The site runs on Salesforce Commerce Cloud (Demandware / SFCC).
+Key URL patterns:
+  - All auctions index:  /auctions?cgid=cat-l1-auctions&sz=60
+  - Single auction lots: /auctions?cgid=cat-l1-auctions&prefn1=auctionId
+                           &prefv1=<encoded_id>&sz=60&start=<N>
+  - Closed results:      /on/demandware.store/Sites-langtons-Site/en_AU/
+                           Auction-ClosedAuction?auctionStatus=Closed
+  - Individual lot page: /p/<slug>/auc-var-<id>.html
 
-CSS classes confirmed on the live site:
-  auction-tile, bid-now, curr-bid, closing-soon, closing-later,
-  classification-badge, classification-classified
+Auctions are discovered from the auctionId SFCC refinement panel on the
+index page: any <a> with prefn1=auctionId in its href is an auction.
 """
 
 import logging
@@ -18,6 +19,7 @@ import re
 import time
 from datetime import datetime
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse, unquote_plus
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -144,33 +146,39 @@ class LangtonsScraper:
     # Public API
     # ------------------------------------------------------------------
 
+    # Page size used for all SFCC auction listing requests
+    _PAGE_SZ = 60
+
     def get_auctions(self) -> list[dict]:
-        """Return a list of auctions from Langton's."""
+        """Return a list of current auctions from Langton's."""
         auctions: list[dict] = []
         seen: set[str] = set()
 
-        # Primary listing pages — try in order, stop at first that returns results
-        # (auctions.html and /auctions are equivalent; avoid fetching both)
-        for path in ["/auctions.html", "/auctions"]:
-            soup = self._fetch(self.base_url + path)
-            if soup is None:
-                continue
-            for item in self._find_auction_links(soup):
-                aid = item["auction_id"]
-                if aid not in seen:
-                    seen.add(aid)
-                    auctions.append(item)
-            if auctions:
-                break  # found results — skip the fallback URL
+        # Primary: SFCC auction index — parse auctionId refinements for all auctions
+        index_url = f"{self.base_url}/auctions?cgid=cat-l1-auctions&sz={self._PAGE_SZ}"
+        soup = self._fetch(index_url)
+        if soup is None:
+            soup = self._fetch(f"{self.base_url}/auctions.html")
 
-        # Also check the closed/past auction endpoint for results data
-        closed_url = self.base_url + f"{_DW_BASE}/Auction-ClosedAuction?auctionStatus=Closed"
-        soup = self._fetch(closed_url)
         if soup:
-            for item in self._find_auction_links(soup):
-                aid = item["auction_id"]
-                if aid not in seen:
-                    seen.add(aid)
+            for item in self._find_auction_refinements(soup):
+                if item["auction_id"] not in seen:
+                    seen.add(item["auction_id"])
+                    auctions.append(item)
+            # Fallback: legacy tile / href discovery
+            if not auctions:
+                for item in self._find_auction_links(soup):
+                    if item["auction_id"] not in seen:
+                        seen.add(item["auction_id"])
+                        auctions.append(item)
+
+        # Also check the closed/past auction endpoint
+        closed_url = self.base_url + f"{_DW_BASE}/Auction-ClosedAuction?auctionStatus=Closed"
+        closed_soup = self._fetch(closed_url)
+        if closed_soup:
+            for item in self._find_auction_refinements(closed_soup) or self._find_auction_links(closed_soup):
+                if item["auction_id"] not in seen:
+                    seen.add(item["auction_id"])
                     auctions.append(item)
 
         logger.info("Found %d auctions", len(auctions))
@@ -182,13 +190,7 @@ class LangtonsScraper:
         page = 1
 
         while page <= self.max_pages:
-            # SFCC pagination uses ?start=N&sz=N or ?page=N
-            if page > 1:
-                sep = "&" if "?" in auction_url else "?"
-                url = f"{auction_url}{sep}page={page}&start={(page-1)*24}"
-            else:
-                url = auction_url
-
+            url = self._page_url(auction_url, page)
             soup = self._fetch(url)
             if soup is None:
                 break
@@ -205,6 +207,17 @@ class LangtonsScraper:
 
         logger.info("Got %d lots from auction %s", len(lots), auction_id)
         return lots
+
+    def _page_url(self, base_url: str, page: int) -> str:
+        """Return a SFCC-compatible paginated URL for the given 1-indexed page."""
+        if page == 1:
+            return base_url
+        start = (page - 1) * self._PAGE_SZ
+        parsed = urlparse(base_url)
+        params = dict(parse_qsl(parsed.query))
+        params["start"] = str(start)
+        params["sz"] = str(self._PAGE_SZ)
+        return urlunparse(parsed._replace(query=urlencode(params)))
 
     def get_lot_detail(self, lot_url: str, auction_id: str) -> Optional[dict]:
         """Scrape the detail page for a single lot (richer condition/provenance data)."""
@@ -230,6 +243,54 @@ class LangtonsScraper:
     # ------------------------------------------------------------------
     # Internal: Auction list parsing
     # ------------------------------------------------------------------
+
+    def _find_auction_refinements(self, soup: BeautifulSoup) -> list[dict]:
+        """
+        Parse SFCC auctionId refinement links to discover all live auctions.
+
+        Any <a> whose href contains prefn1=auctionId (or prefn2= etc.) and a
+        corresponding prefv value is an individual auction filter link.
+        Example href: /auctions?cgid=cat-l1-auctions&prefn1=auctionId
+                        &prefv1=2026-03-31%3B+31+TUE%3A+Australian+Cellar+Selection&sz=24
+        """
+        results: list[dict] = []
+        seen: set[str] = set()
+
+        for a in soup.find_all("a", href=True):
+            href: str = a["href"]
+            # Look for any SFCC refinement link that filters by auctionId
+            if "auctionId" not in href:
+                continue
+            m = re.search(r"prefv\d+=([^&]+)", href)
+            if not m:
+                continue
+            raw_value = unquote_plus(m.group(1))
+            if not raw_value or raw_value in seen:
+                continue
+            seen.add(raw_value)
+
+            # Build the canonical lot-listing URL for this auction
+            url = (href if href.startswith("http") else self.base_url + href)
+            # Ensure sz is set to our preferred page size
+            parsed = urlparse(url)
+            params = dict(parse_qsl(parsed.query))
+            params["sz"] = str(self._PAGE_SZ)
+            params.pop("start", None)
+            url = urlunparse(parsed._replace(query=urlencode(params)))
+
+            # Use the raw prefv value as auction_id (stable, human-readable)
+            auction_id = re.sub(r"[^a-z0-9-]", "-", raw_value.lower())[:60].strip("-")
+            title = a.get_text(strip=True) or raw_value
+
+            results.append({
+                "auction_id":   auction_id,
+                "title":        title,
+                "auction_date": self._extract_date_from_text(raw_value),
+                "url":          url,
+                "scraped_at":   datetime.now().isoformat(),
+            })
+
+        return results
 
     def _find_auction_links(self, soup: BeautifulSoup) -> list[dict]:
         results: list[dict] = []

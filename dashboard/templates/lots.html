@@ -21,8 +21,8 @@
         <input id="f-producer" class="form-control form-control-sm" placeholder="e.g. Penfolds">
       </div>
       <div class="col-sm-2">
-        <label class="form-label small mb-1">Region</label>
-        <input id="f-region" class="form-control form-control-sm" placeholder="e.g. Barossa">
+        <label class="form-label small mb-1">Region / Country</label>
+        <input id="f-region" class="form-control form-control-sm" placeholder="e.g. Barossa or France">
       </div>
       <div class="col-sm-1">
         <label class="form-label small mb-1">From</label>
@@ -61,11 +61,14 @@
           <th>Wine</th>
           <th>Vintage</th>
           <th>Producer</th>
+          <th>Country</th>
           <th>Region</th>
           <th>Estimate</th>
+          <th>Current Bid</th>
           <th>Realized</th>
           <th>Fill</th>
           <th>Auction</th>
+          <th></th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -104,26 +107,32 @@
   const dt = $('#lots-table').DataTable({
     ajax: { url: '/api/lots', dataSrc: 'lots' },
     pageLength: 25,
-    order: [[8, 'desc'], [0, 'asc']],
+    order: [[10, 'desc'], [0, 'asc']],
     columns: [
-      { data: 'lot_number', width: '55px' },
-      { data: 'wine_name', render: v => `<span title="${v}">${v.length>45?v.slice(0,44)+'…':v}</span>` },
-      { data: 'vintage',   defaultContent: 'NV', width: '70px' },
-      { data: 'producer',  defaultContent: '—' },
-      { data: 'region',    defaultContent: '—' },
+      { data: 'lot_number',  width: '55px' },
+      { data: 'wine_name',   render: v => `<span title="${v}">${v.length>45?v.slice(0,44)+'\u2026':v}</span>` },
+      { data: 'vintage',     defaultContent: 'NV', width: '65px' },
+      { data: 'producer',    defaultContent: '—' },
+      { data: 'country',     defaultContent: '—', width: '90px' },
+      { data: 'region',      defaultContent: '—' },
       { data: null, render: r => {
-          if (r.estimate_low && r.estimate_high)
+          if (r.estimate_low != null && r.estimate_high != null)
             return `$${Math.round(r.estimate_low).toLocaleString()}–$${Math.round(r.estimate_high).toLocaleString()}`;
           return '—';
         }
       },
+      { data: 'current_bid', render: v => v != null ? `$${Math.round(v).toLocaleString()}` : '—', width: '90px' },
       { data: 'realized_price', render: v => {
           if (v == null) return '<span class="badge bg-warning text-dark">Open</span>';
           return `<strong class="text-success">$${Math.round(v).toLocaleString()}</strong>`;
         }
       },
-      { data: 'fill_level', defaultContent: '—' },
+      { data: 'fill_level',    defaultContent: '—' },
       { data: 'auction_title', render: v => v ? `<span class="small text-muted">${v.slice(0,30)}</span>` : '—' },
+      { data: 'lot_url', orderable: false, width: '36px', render: v =>
+          v ? `<a href="${v}" target="_blank" rel="noopener" title="View on Langton's">
+                 <i class="bi bi-box-arrow-up-right"></i></a>` : ''
+      },
     ],
     language: { emptyTable: 'No lots found. Try adjusting your filters or scrape new data.' },
   });

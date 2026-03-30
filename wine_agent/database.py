@@ -214,8 +214,10 @@ class AuctionDatabase:
             conditions.append("LOWER(l.producer) LIKE LOWER(?)")
             params.append(f"%{producer}%")
         if region:
-            conditions.append("LOWER(l.region) LIKE LOWER(?)")
-            params.append(f"%{region}%")
+            conditions.append(
+                "(LOWER(l.region) LIKE LOWER(?) OR LOWER(l.country) LIKE LOWER(?))"
+            )
+            params.extend([f"%{region}%", f"%{region}%"])
         if wine_name:
             conditions.append("LOWER(l.wine_name) LIKE LOWER(?)")
             params.append(f"%{wine_name}%")

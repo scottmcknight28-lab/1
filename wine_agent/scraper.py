@@ -165,11 +165,21 @@ class LangtonsScraper:
 
         soup = self._fetch(self.base_url + "/auctions.html")
         if soup is not None:
-            # Weekly auctions — derive current-week URLs from past patterns
+            # Pattern-based fallback: derive current-week URLs from past patterns.
+            # Reliable for auction series with consistent weekly names (e.g. TUE series).
             for item in self._generate_current_auction_urls(soup):
                 if item["auction_id"] not in seen:
                     seen.add(item["auction_id"])
                     auctions.append(item)
+
+        # 2. Live discovery: scan the main listing page for actual current auction IDs.
+        # This catches weekly auctions whose names change (e.g. rotating SUN themes)
+        # by finding real auction ID strings embedded in SFCC analytics/data attrs.
+        for id_str in self._discover_live_auction_ids():
+            item = self._auction_dict_from_id_str(id_str)
+            if item["auction_id"] not in seen:
+                seen.add(item["auction_id"])
+                auctions.append(item)
 
         # 3. Closed-auction endpoint
         closed_url = self.base_url + f"{_DW_BASE}/Auction-ClosedAuction?auctionStatus=Closed"
@@ -297,6 +307,65 @@ class LangtonsScraper:
             })
 
         return results
+
+    def _discover_live_auction_ids(self) -> list[str]:
+        """
+        Fetch the main live auction listing and scan ALL HTML (including scripts
+        and data attributes) for Langton's auction ID strings of the form:
+          "YYYY-MM-DD; DD DAY: Auction Name"
+
+        SFCC often embeds these in analytics dataLayer pushes, data-* attributes,
+        and URL parameters within the rendered tile HTML.
+        """
+        soup = self._fetch(f"{self.base_url}/auctions?cgid=cat-l1-auctions&sz=60")
+        if soup is None:
+            return []
+
+        # Pattern matches the full auction ID string in any context
+        # Allow for URL-encoded variants (%3B = ;, %3A = :) and handle both
+        id_re = re.compile(
+            r"\d{4}-\d{2}-\d{2}[;%][\s+]?\d+[\s+]+[A-Z]{2,3}[:%][\s+]"
+            r"[A-Za-z0-9 &',\-\u2018\u2019\u201c\u201d%+]+"
+        )
+
+        found: set[str] = set()
+
+        # Scan the raw serialised HTML — catches dataLayer JSON, data-attrs, hrefs
+        raw = str(soup)
+        # First pass: URL-decode the whole blob so %3B → ; and %3A → :
+        decoded_raw = unquote_plus(raw)
+        for m in id_re.finditer(decoded_raw):
+            candidate = m.group(0).strip().rstrip("\\\"' ")
+            # Normalise whitespace
+            candidate = re.sub(r"\s+", " ", candidate)
+            # Must look like a real auction ID
+            if re.search(r"\d{4}-\d{2}-\d{2};\s*\d+\s+[A-Z]{2,3}:\s*\S", candidate):
+                found.add(candidate)
+
+        logger.info("Live auction scan found %d auction IDs", len(found))
+        return list(found)
+
+    def _auction_dict_from_id_str(self, auction_id_str: str) -> dict:
+        """Build an auction discovery dict from a raw SFCC auction ID string."""
+        auction_id = re.sub(r"[^a-z0-9-]", "-", auction_id_str.lower())[:60].strip("-")
+        url = (
+            f"{self.base_url}/auctions"
+            f"?cgid=cat-l1-auctions"
+            f"&prefn1=auctionId"
+            f"&prefv1={quote_plus(auction_id_str)}"
+            f"&sz={self._PAGE_SZ}"
+        )
+        # Extract a clean title (strip the date prefix, keep "DD DAY: Name")
+        m = re.match(r"\d{4}-\d{2}-\d{2};\s*(.+)", auction_id_str)
+        title = m.group(1).strip() if m else auction_id_str
+        date_m = re.match(r"(\d{4}-\d{2}-\d{2})", auction_id_str)
+        return {
+            "auction_id":   auction_id,
+            "title":        title,
+            "auction_date": date_m.group(1) if date_m else "",
+            "url":          url,
+            "scraped_at":   datetime.now().isoformat(),
+        }
 
     def _generate_current_auction_urls(self, soup: BeautifulSoup) -> list[dict]:
         """
@@ -775,10 +844,11 @@ class LangtonsScraper:
     def _parse_estimate(text: Optional[str]) -> tuple[Optional[float], Optional[float]]:
         if not text:
             return None, None
-        m = re.search(r"\$?([\d,]+)\s*[-–]\s*\$?([\d,]+)", text)
+        # Match price ranges like "$4,200.00 - $5,300.00" or "$900 – $1,300"
+        m = re.search(r"\$?([\d,]+(?:\.\d+)?)\s*[-–]\s*\$?([\d,]+(?:\.\d+)?)", text)
         if m:
             return float(m.group(1).replace(",", "")), float(m.group(2).replace(",", ""))
-        m = re.search(r"\$?([\d,]+)", text)
+        m = re.search(r"\$?([\d,]+(?:\.\d+)?)", text)
         if m:
             v = float(m.group(1).replace(",", ""))
             return v, v

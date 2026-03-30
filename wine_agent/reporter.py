@@ -104,7 +104,7 @@ class AuctionReporter:
         # 1. Snapshot of what we had recommended BEFORE results came in
         prior_recs = {r["lot_id"]: r for r in self.db.get_recommendations()}
 
-        # 2. Scrape results (lots now have realized prices)
+        # 2. Scrape results — fetch detail page per lot to get hammer price
         console.print("[dim]Scraping Langton's for auction results…[/dim]")
         auctions = self.scraper.get_auctions()
         lots_updated = 0
@@ -112,6 +112,12 @@ class AuctionReporter:
             self.db.upsert_auction(auction)
             lots = self.scraper.get_lots(auction["url"], auction["auction_id"])
             for lot in lots:
+                if lot.get("lot_url") and not lot.get("realized_price"):
+                    detail = self.scraper.get_lot_detail(
+                        lot["lot_url"], auction["auction_id"]
+                    )
+                    if detail and detail.get("realized_price"):
+                        lot["realized_price"] = detail["realized_price"]
                 self.db.upsert_lot(lot)
             lots_updated += len([l for l in lots if l.get("realized_price")])
         console.print(f"[dim]Updated {lots_updated} lots with realized prices.[/dim]\n")

@@ -52,6 +52,9 @@ class AuctionDatabase:
                 estimate_low    REAL,
                 estimate_high   REAL,
                 realized_price  REAL,
+                current_bid     REAL,
+                closing_date    TEXT,
+                critic_scores   TEXT,
                 condition_notes TEXT,
                 fill_level      TEXT,
                 cellar_stored   INTEGER DEFAULT 0,
@@ -77,6 +80,18 @@ class AuctionDatabase:
             CREATE INDEX IF NOT EXISTS idx_lots_wine     ON lots(wine_name);
             CREATE INDEX IF NOT EXISTS idx_lots_vintage  ON lots(vintage);
         """)
+
+        # Step 1b: add new columns to existing databases (non-destructive migration)
+        for col, defn in [
+            ("current_bid",   "REAL"),
+            ("closing_date",  "TEXT"),
+            ("critic_scores", "TEXT"),
+        ]:
+            try:
+                self.conn.execute(f"ALTER TABLE lots ADD COLUMN {col} {defn}")
+            except Exception:
+                pass  # column already exists
+        self.conn.commit()
 
         # Step 2: remove duplicate lot_url rows before adding unique index
         # (migration for existing databases that used plain INSERT)
@@ -126,18 +141,23 @@ class AuctionDatabase:
     # ------------------------------------------------------------------
 
     def upsert_lot(self, lot: dict) -> int:
+        lot.setdefault("current_bid",   None)
+        lot.setdefault("closing_date",  None)
+        lot.setdefault("critic_scores", None)
         cur = self.conn.execute(
             """
             INSERT INTO lots (
                 auction_id, lot_number, wine_name, producer, vintage, region,
                 varietal, bottle_count, bottle_size,
                 estimate_low, estimate_high, realized_price,
+                current_bid, closing_date, critic_scores,
                 condition_notes, fill_level, cellar_stored, original_carton,
                 provenance, lot_url
             ) VALUES (
                 :auction_id, :lot_number, :wine_name, :producer, :vintage, :region,
                 :varietal, :bottle_count, :bottle_size,
                 :estimate_low, :estimate_high, :realized_price,
+                :current_bid, :closing_date, :critic_scores,
                 :condition_notes, :fill_level, :cellar_stored, :original_carton,
                 :provenance, :lot_url
             )
@@ -154,6 +174,9 @@ class AuctionDatabase:
                 estimate_low    = excluded.estimate_low,
                 estimate_high   = excluded.estimate_high,
                 realized_price  = COALESCE(excluded.realized_price, lots.realized_price),
+                current_bid     = excluded.current_bid,
+                closing_date    = excluded.closing_date,
+                critic_scores   = excluded.critic_scores,
                 condition_notes = excluded.condition_notes,
                 fill_level      = excluded.fill_level,
                 cellar_stored   = excluded.cellar_stored,

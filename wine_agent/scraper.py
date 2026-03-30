@@ -79,6 +79,8 @@ _SELECTORS: dict[str, list[str]] = {
     ],
     "realized": [
         ".realized-price", ".hammer-price", ".sold-price",
+        "div.max-bid-price.secondary-headline",  # confirmed on detail page
+        ".max-bid-price",
         "[class*='realized']", "[class*='hammer']", "[class*='sold-price']",
     ],
     "condition": [
@@ -390,13 +392,22 @@ class LangtonsScraper:
         closing_raw = countdown.get("data-end-date", "") if countdown else ""
 
         # ── Prices ───────────────────────────────────────────────────
-        est_text   = self._text(el, _SELECTORS["estimate"])
+        est_text = self._text(el, _SELECTORS["estimate"])
         est_lo, est_hi = self._parse_estimate(est_text)
 
-        real_text  = self._text(el, _SELECTORS["realized"])
-        if not real_text:
-            real_text = self._text(el, _SELECTORS["current_bid"])
-        realized   = self._parse_price(real_text)
+        # Current bid — live price during auction; NOT the realized/hammer price
+        current_bid = self._parse_price(self._text(el, _SELECTORS["current_bid"]) or "")
+
+        # ── Critic scores ─────────────────────────────────────────────
+        scores = []
+        for badge in el.select(".critic-badge"):
+            score_el    = badge.select_one(".critic-review-score")
+            initials_el = badge.select_one(".critic-initials")
+            if score_el and initials_el:
+                scores.append(
+                    f"{score_el.get_text(strip=True)} {initials_el.get_text(strip=True)}"
+                )
+        critic_scores = ", ".join(scores) if scores else None
 
         # ── Condition / provenance ────────────────────────────────────
         cond_text = self._text(el, _SELECTORS["condition"]) or ""
@@ -416,14 +427,16 @@ class LangtonsScraper:
             "bottle_size":     bsize_text,
             "estimate_low":    est_lo,
             "estimate_high":   est_hi,
-            "realized_price":  None,   # only set after auction closes; current bid ≠ realized
+            "realized_price":  None,   # populated post-auction via detail-page fetch
+            "current_bid":     current_bid,
+            "closing_date":    closing_raw,
+            "critic_scores":   critic_scores,
             "condition_notes": cond_text,
             "fill_level":      fill,
             "cellar_stored":   cellar,
             "original_carton": oc,
             "provenance":      cond_text,
             "lot_url":         lot_url,
-            "closing_date":    closing_raw,
         }
 
     # ------------------------------------------------------------------

@@ -375,12 +375,15 @@ class LangtonsScraper:
         vintage  = self._parse_vintage(wine_name) or self._parse_vintage(wine_label)
 
         # ── Bottle format & quantity ──────────────────────────────────
-        # .size-text gives "1 x Bottle" — parse both qty and format from it
+        # .size-text gives "1 x Bottle" — extract qty and format in one pass
         size_raw = self._text(el, _SELECTORS["bottle_size"]) or ""
-        qty = self._parse_quantity(size_raw) or 1
-        # Extract format word: "1 x Bottle" → "Bottle"
-        m_fmt = re.search(r"[xX×]\s*(\w+)", size_raw)
-        bsize_text = m_fmt.group(1).capitalize() if m_fmt else size_raw or "Bottle"
+        m_size = re.search(r"(\d+)\s*[xX×]\s*(\w+)", size_raw)
+        if m_size:
+            qty = int(m_size.group(1))
+            bsize_text = m_size.group(2).capitalize()
+        else:
+            qty = self._parse_quantity(size_raw) or 1
+            bsize_text = size_raw or "Bottle"
 
         # ── Closing date (open = no realized price yet) ───────────────
         countdown = el.select_one(".countdown[data-end-date]")
@@ -609,10 +612,7 @@ class LangtonsScraper:
     @staticmethod
     def _parse_quantity(text: str) -> Optional[int]:
         # Handles: "1 x Bottle", "6 x Bottle", "12 bottles", "6btl"
-        m = re.search(r"(\d+)\s*[xX×]\s*\w", text)
-        if m:
-            return int(m.group(1))
-        m = re.search(r"(\d+)\s*(?:bottle|btl)", text, re.I)
+        m = re.search(r"(\d+)\s*(?:[xX×]\s*\w|bottle|btl)", text, re.I)
         return int(m.group(1)) if m else None
 
     @staticmethod

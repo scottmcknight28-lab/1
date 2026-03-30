@@ -117,20 +117,29 @@ async def api_scrape_debug(request: Request):
         results: dict = {}
 
         # ── 1. Auction listing page ───────────────────────────────────
-        for path in ["/auctions.html", "/auctions"]:
+        for path in ["/auctions", "/auctions.html"]:
             url = base_url + path
             soup = scraper._fetch(url)
             if soup is None:
                 results[path] = {"error": "fetch failed"}
                 continue
 
-            auction_links = scraper._find_auction_links(soup)
+            auction_refinements = scraper._find_auction_refinements(soup)
+            auction_links       = scraper._find_auction_links(soup)
+            # Sample auctionId hrefs found on the page
+            sample_auction_hrefs = [
+                a["href"] for a in soup.find_all("a", href=True)
+                if "auctionId" in a.get("href", "")
+            ][:10]
             results[path] = {
-                "html_length": len(str(soup)),
-                "auction_links_parsed": auction_links[:5],
+                "html_length":           len(str(soup)),
+                "auction_refinements":   auction_refinements[:10],
+                "auction_links_parsed":  auction_links[:5],
+                "sample_auctionid_hrefs": sample_auction_hrefs,
             }
 
             # ── 2. First auction's lot listing ────────────────────────
+            auction_links = auction_refinements or auction_links
             if auction_links:
                 first = auction_links[0]
                 lot_soup = scraper._fetch(first["url"])

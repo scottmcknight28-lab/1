@@ -154,29 +154,25 @@ class LangtonsScraper:
         auctions: list[dict] = []
         seen: set[str] = set()
 
-        # Primary: SFCC auction index — parse auctionId refinements for all auctions
-        index_url = f"{self.base_url}/auctions?cgid=cat-l1-auctions&sz={self._PAGE_SZ}"
-        soup = self._fetch(index_url)
-        if soup is None:
-            soup = self._fetch(f"{self.base_url}/auctions.html")
-
-        if soup:
+        # Fetch plain /auctions — this page has the auctionId refinement panel
+        # listing all live auctions. Do NOT add cgid= as that switches to
+        # product-listing mode and breaks the refinement panel.
+        for path in ["/auctions", "/auctions.html"]:
+            soup = self._fetch(self.base_url + path)
+            if soup is None:
+                continue
             for item in self._find_auction_refinements(soup):
                 if item["auction_id"] not in seen:
                     seen.add(item["auction_id"])
                     auctions.append(item)
-            # Fallback: legacy tile / href discovery
-            if not auctions:
-                for item in self._find_auction_links(soup):
-                    if item["auction_id"] not in seen:
-                        seen.add(item["auction_id"])
-                        auctions.append(item)
+            if auctions:
+                break  # found refinements — don't try the fallback URL
 
         # Also check the closed/past auction endpoint
         closed_url = self.base_url + f"{_DW_BASE}/Auction-ClosedAuction?auctionStatus=Closed"
         closed_soup = self._fetch(closed_url)
         if closed_soup:
-            for item in self._find_auction_refinements(closed_soup) or self._find_auction_links(closed_soup):
+            for item in self._find_auction_refinements(closed_soup):
                 if item["auction_id"] not in seen:
                     seen.add(item["auction_id"])
                     auctions.append(item)

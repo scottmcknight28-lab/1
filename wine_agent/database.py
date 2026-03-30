@@ -45,6 +45,7 @@ class AuctionDatabase:
                 wine_name       TEXT    NOT NULL,
                 producer        TEXT,
                 vintage         INTEGER,
+                country         TEXT,
                 region          TEXT,
                 varietal        TEXT,
                 bottle_count    INTEGER DEFAULT 1,
@@ -86,6 +87,7 @@ class AuctionDatabase:
             ("current_bid",   "REAL"),
             ("closing_date",  "TEXT"),
             ("critic_scores", "TEXT"),
+            ("country",       "TEXT"),
         ]:
             try:
                 self.conn.execute(f"ALTER TABLE lots ADD COLUMN {col} {defn}")
@@ -144,17 +146,18 @@ class AuctionDatabase:
         lot.setdefault("current_bid",   None)
         lot.setdefault("closing_date",  None)
         lot.setdefault("critic_scores", None)
+        lot.setdefault("country",       None)
         cur = self.conn.execute(
             """
             INSERT INTO lots (
-                auction_id, lot_number, wine_name, producer, vintage, region,
+                auction_id, lot_number, wine_name, producer, vintage, country, region,
                 varietal, bottle_count, bottle_size,
                 estimate_low, estimate_high, realized_price,
                 current_bid, closing_date, critic_scores,
                 condition_notes, fill_level, cellar_stored, original_carton,
                 provenance, lot_url
             ) VALUES (
-                :auction_id, :lot_number, :wine_name, :producer, :vintage, :region,
+                :auction_id, :lot_number, :wine_name, :producer, :vintage, :country, :region,
                 :varietal, :bottle_count, :bottle_size,
                 :estimate_low, :estimate_high, :realized_price,
                 :current_bid, :closing_date, :critic_scores,
@@ -167,6 +170,7 @@ class AuctionDatabase:
                 wine_name       = excluded.wine_name,
                 producer        = excluded.producer,
                 vintage         = excluded.vintage,
+                country         = excluded.country,
                 region          = excluded.region,
                 varietal        = excluded.varietal,
                 bottle_count    = excluded.bottle_count,

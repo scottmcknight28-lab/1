@@ -184,7 +184,12 @@ class LangtonsScraper:
         return auctions
 
     def get_lots(self, auction_url: str, auction_id: str) -> list[dict]:
-        """Scrape all lot cards from an auction listing page (handles pagination)."""
+        """Scrape all lot cards from an auction listing page (handles pagination).
+
+        Langton's SFCC doesn't render pagination links server-side, so we keep
+        fetching pages until a page returns fewer lots than _PAGE_SZ (indicating
+        the last page) or we hit max_pages.
+        """
         lots: list[dict] = []
         page = 1
 
@@ -200,7 +205,9 @@ class LangtonsScraper:
 
             lots.extend(page_lots)
 
-            if not self._has_next_page(soup):
+            # Stop when the page returned fewer results than a full page —
+            # that means we've reached the end (works even without a "next" link).
+            if len(page_lots) < self._PAGE_SZ:
                 break
             page += 1
 
@@ -579,12 +586,15 @@ class LangtonsScraper:
         cellar    = 1 if re.search(r"cellar.?stor|professionally stor", cond_text, re.I) else 0
         oc        = 1 if re.search(r"\bOC\b|OWC|original.?carton", cond_text) else 0
 
+        country = self._infer_country(region, wine_name)
+
         return {
             "auction_id":      auction_id,
             "lot_number":      lot_number,
             "wine_name":       wine_name,
             "producer":        producer or self._infer_producer(wine_name),
             "vintage":         vintage,
+            "country":         country,
             "region":          region,
             "varietal":        varietal,
             "bottle_count":    qty,
@@ -646,12 +656,15 @@ class LangtonsScraper:
         qty_text    = self._text(soup, _SELECTORS["quantity"]) or ""
         qty = self._parse_quantity(qty_text) or 1
 
+        country = self._infer_country(region, wine_name)
+
         return {
             "auction_id":      auction_id,
             "lot_number":      lot_number,
             "wine_name":       wine_name,
             "producer":        producer or self._infer_producer(wine_name),
             "vintage":         vintage,
+            "country":         country,
             "region":          region,
             "varietal":        varietal,
             "bottle_count":    qty,
@@ -800,6 +813,96 @@ class LangtonsScraper:
             text,
         )
         return m.group(0) if m else datetime.now().strftime("%Y-%m")
+
+    # Region keyword → country (checked case-insensitively; longer strings first)
+    _REGION_COUNTRY: list[tuple[str, str]] = [
+        # Australia
+        ("barossa",         "Australia"), ("mclaren vale",     "Australia"),
+        ("coonawarra",      "Australia"), ("clare valley",     "Australia"),
+        ("eden valley",     "Australia"), ("margaret river",   "Australia"),
+        ("yarra valley",    "Australia"), ("mornington",       "Australia"),
+        ("hunter valley",   "Australia"), ("heathcote",        "Australia"),
+        ("beechworth",      "Australia"), ("grampians",        "Australia"),
+        ("pyrenees",        "Australia"), ("mudgee",           "Australia"),
+        ("rutherglen",      "Australia"), ("great southern",   "Australia"),
+        ("swan valley",     "Australia"), ("padthaway",        "Australia"),
+        ("south australia", "Australia"), ("western australia","Australia"),
+        ("victoria",        "Australia"), ("new south wales",  "Australia"),
+        ("tasmania",        "Australia"),
+        # France
+        ("pauillac",        "France"),    ("margaux",          "France"),
+        ("saint-julien",    "France"),    ("st julien",        "France"),
+        ("saint-estèphe",   "France"),    ("st estephe",       "France"),
+        ("pomerol",         "France"),    ("saint-emilion",    "France"),
+        ("st emilion",      "France"),    ("sauternes",        "France"),
+        ("pessac",          "France"),    ("graves",           "France"),
+        ("médoc",           "France"),    ("medoc",            "France"),
+        ("chambolle",       "France"),    ("gevrey",           "France"),
+        ("vosne",           "France"),    ("nuits",            "France"),
+        ("volnay",          "France"),    ("pommard",          "France"),
+        ("meursault",       "France"),    ("puligny",          "France"),
+        ("chassagne",       "France"),    ("montrachet",       "France"),
+        ("chablis",         "France"),    ("macon",            "France"),
+        ("beaujolais",      "France"),    ("rhône",            "France"),
+        ("rhone",           "France"),    ("hermitage",        "France"),
+        ("châteauneuf",     "France"),    ("chateauneuf",      "France"),
+        ("gigondas",        "France"),    ("burgundy",         "France"),
+        ("bordeaux",        "France"),    ("champagne",        "France"),
+        ("alsace",          "France"),    ("loire",            "France"),
+        ("sancerre",        "France"),    ("pouilly",          "France"),
+        ("muscadet",        "France"),    ("provence",         "France"),
+        ("languedoc",       "France"),    ("roussillon",       "France"),
+        ("côtes du rhône",  "France"),    ("échezeaux",        "France"),
+        ("echezeaux",       "France"),    ("romanée",          "France"),
+        ("romanee",         "France"),    ("corton",           "France"),
+        ("bâtard",          "France"),    ("batard",           "France"),
+        # Italy
+        ("barolo",          "Italy"),     ("barbaresco",       "Italy"),
+        ("brunello",        "Italy"),     ("montalcino",       "Italy"),
+        ("chianti",         "Italy"),     ("tuscany",          "Italy"),
+        ("toscana",         "Italy"),     ("piedmont",         "Italy"),
+        ("piemonte",        "Italy"),     ("veneto",           "Italy"),
+        ("amarone",         "Italy"),     ("soave",            "Italy"),
+        ("sicily",          "Italy"),     ("sardinia",         "Italy"),
+        # USA
+        ("napa valley",     "USA"),       ("napa",             "USA"),
+        ("sonoma",          "USA"),       ("santa barbara",    "USA"),
+        ("santa cruz",      "USA"),       ("paso robles",      "USA"),
+        ("willamette",      "USA"),       ("oregon",           "USA"),
+        ("washington state","USA"),
+        # Spain
+        ("rioja",           "Spain"),     ("ribera del duero", "Spain"),
+        ("priorat",         "Spain"),     ("rias baixas",      "Spain"),
+        ("penedès",         "Spain"),
+        # Germany
+        ("mosel",           "Germany"),   ("rheingau",         "Germany"),
+        ("pfalz",           "Germany"),   ("rheinhessen",      "Germany"),
+        ("nahe",            "Germany"),
+        # New Zealand
+        ("marlborough",     "New Zealand"), ("central otago",  "New Zealand"),
+        ("hawke's bay",     "New Zealand"), ("hawkes bay",     "New Zealand"),
+        ("martinborough",   "New Zealand"),
+        # Portugal
+        ("douro",           "Portugal"),  ("port",             "Portugal"),
+        ("alentejo",        "Portugal"),  ("vinho verde",      "Portugal"),
+        # Austria
+        ("wachau",          "Austria"),   ("kamptal",          "Austria"),
+        ("styria",          "Austria"),
+        # Argentina
+        ("mendoza",         "Argentina"), ("malbec argentina", "Argentina"),
+        # Chile
+        ("maipo",           "Chile"),     ("colchagua",        "Chile"),
+        ("casablanca",      "Chile"),
+    ]
+
+    @classmethod
+    def _infer_country(cls, region: str, wine_name: str) -> str:
+        """Infer country from region text or wine name using keyword matching."""
+        text = f"{region} {wine_name}".lower()
+        for keyword, country in cls._REGION_COUNTRY:
+            if keyword in text:
+                return country
+        return ""
 
     # Known Australian fine wine producers for name inference
     _KNOWN_PRODUCERS = [

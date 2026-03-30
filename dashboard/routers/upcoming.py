@@ -109,6 +109,7 @@ async def api_scrape_debug(request: Request):
     from wine_agent.scraper import LangtonsScraper, _SELECTORS
 
     def _debug(config_path: str) -> dict:
+        import json, re as _re
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         base_url = cfg.get("scraping", {}).get("base_url", "https://www.langtons.com.au")
@@ -116,95 +117,100 @@ async def api_scrape_debug(request: Request):
         scraper = LangtonsScraper(base_url=base_url, delay_seconds=0.5)
         results: dict = {}
 
-        # ── 1. Auction listing page ───────────────────────────────────
-        for path in ["/auctions", "/auctions.html"]:
-            url = base_url + path
+        # ── 1. Probe key pages for auction discovery ──────────────────
+        # Try several URL variants so we can see which one has the right structure
+        probe_paths = [
+            "/auctions.html",
+            "/auctions?cgid=cat-l1-auctions&sz=24",
+        ]
+        for path in probe_paths:
+            url = base_url + path if path.startswith("/") else path
             soup = scraper._fetch(url)
             if soup is None:
                 results[path] = {"error": "fetch failed"}
                 continue
 
-            auction_refinements = scraper._find_auction_refinements(soup)
-            auction_links       = scraper._find_auction_links(soup)
-            # Sample auctionId hrefs found on the page
-            sample_auction_hrefs = [
+            # Auction-tile slugs in the HTML (old-style /auctions/SLUG links)
+            auction_slug_links = [
+                a["href"] for a in soup.find_all("a", href=True)
+                if _re.search(r"/auctions/[^/?#]+$", a["href"])
+            ][:10]
+
+            # Any href containing auctionId (JS-rendered refinements won't appear)
+            auction_id_hrefs = [
                 a["href"] for a in soup.find_all("a", href=True)
                 if "auctionId" in a.get("href", "")
             ][:10]
+
+            # Embedded JSON in <script> tags mentioning "auctionId" or "prefv"
+            script_auction_snippets: list[str] = []
+            for script in soup.find_all("script"):
+                txt = script.string or ""
+                if "auctionId" in txt or "prefv1" in txt or "cgid" in txt:
+                    # Grab up to 500 chars around each hit
+                    for m in _re.finditer(r"auctionId|prefv1", txt):
+                        start = max(0, m.start() - 100)
+                        script_auction_snippets.append(txt[start: m.start() + 200])
+                        if len(script_auction_snippets) >= 5:
+                            break
+                if len(script_auction_snippets) >= 5:
+                    break
+
+            # Count auction-tile vs plain product-tile
+            auction_tiles = soup.select("div.product-tile.auction-tile")
+            product_tiles = soup.select("div.product-tile")
+
             results[path] = {
-                "html_length":           len(str(soup)),
-                "auction_refinements":   auction_refinements[:10],
-                "auction_links_parsed":  auction_links[:5],
-                "sample_auctionid_hrefs": sample_auction_hrefs,
+                "html_length":              len(str(soup)),
+                "auction_tile_count":       len(auction_tiles),
+                "product_tile_count":       len(product_tiles),
+                "auction_slug_links":       auction_slug_links,
+                "auction_id_hrefs":         auction_id_hrefs,
+                "script_auction_snippets":  script_auction_snippets,
             }
 
             # ── 2. First auction's lot listing ────────────────────────
-            auction_links = auction_refinements or auction_links
-            if auction_links:
-                first = auction_links[0]
-                lot_soup = scraper._fetch(first["url"])
-                if lot_soup:
-                    lot_containers: list = []
-                    matched_sel = None
-                    for sel in _SELECTORS["lot_containers"]:
-                        found = lot_soup.select(sel)
-                        if found:
-                            lot_containers = found
-                            matched_sel = sel
-                            break
+            # Use auction-tile slug links if found
+            first_url = None
+            if auction_slug_links:
+                href = auction_slug_links[0]
+                first_url = href if href.startswith("http") else base_url + href
+            elif auction_tiles:
+                a = auction_tiles[0].find("a", href=True)
+                if a:
+                    href = a["href"]
+                    first_url = href if href.startswith("http") else base_url + href
 
-                    # Show full first tile HTML to find price/estimate elements
-                    first_tile_full = str(lot_containers[0]) if lot_containers else None
+            if not first_url:
+                continue
 
-                    # Also look for any element containing "$" in the first tile
-                    price_snippets: list[str] = []
-                    if lot_containers:
-                        tile = lot_containers[0]
-                        for el in tile.find_all(True):
-                            txt = el.get_text(" ", strip=True)
-                            if "$" in txt and len(txt) < 100:
-                                price_snippets.append(f"{el.name}.{' '.join(el.get('class',[]))}: {txt}")
+            lot_soup = scraper._fetch(first_url)
+            if lot_soup:
+                lot_containers: list = []
+                matched_sel = None
+                for sel in _SELECTORS["lot_containers"]:
+                    found = lot_soup.select(sel)
+                    if found:
+                        lot_containers = found
+                        matched_sel = sel
+                        break
 
-                    results["first_auction_lot_page"] = {
-                        "url": first["url"],
-                        "html_length": len(str(lot_soup)),
-                        "matched_selector": matched_sel,
-                        "lot_containers_found": len(lot_containers),
-                        "price_snippets_in_first_tile": price_snippets[:20],
-                        "first_tile_full_html": first_tile_full,
-                    }
+                first_tile_full = str(lot_containers[0]) if lot_containers else None
+                price_snippets: list[str] = []
+                if lot_containers:
+                    for el in lot_containers[0].find_all(True):
+                        txt = el.get_text(" ", strip=True)
+                        if "$" in txt and len(txt) < 100:
+                            price_snippets.append(f"{el.name}.{' '.join(el.get('class',[]))}: {txt}")
 
-                    # ── 3. First lot detail page ──────────────────────
-                    if lot_containers:
-                        pdp = lot_containers[0].select_one(
-                            "a.js-pdp-link, a.pdp-link-anchor, a[class*='pdp-link']"
-                        )
-                        if pdp:
-                            lot_url = pdp.get("href", "")
-                            if not lot_url.startswith("http"):
-                                lot_url = base_url + lot_url
-                            detail_soup = scraper._fetch(lot_url)
-                            if detail_soup:
-                                # Find all elements with $ in text
-                                detail_prices: list[str] = []
-                                for el in detail_soup.find_all(True):
-                                    txt = el.get_text(" ", strip=True)
-                                    if "$" in txt and len(txt) < 120 and not el.find(True):
-                                        cls = " ".join(el.get("class", []))
-                                        detail_prices.append(f"{el.name}.{cls}: {txt}")
-                                # Find estimate/guide/bid related elements
-                                detail_classes: set[str] = set()
-                                for el in detail_soup.find_all(True):
-                                    for c in el.get("class", []):
-                                        if any(k in c.lower() for k in
-                                               ("price", "estimate", "bid", "guide",
-                                                "value", "amount", "curr")):
-                                            detail_classes.add(c)
-                                results["first_lot_detail_page"] = {
-                                    "url": lot_url,
-                                    "price_elements": detail_prices[:30],
-                                    "price_related_classes": sorted(detail_classes),
-                                }
+                results["first_auction_lot_page"] = {
+                    "url": first_url,
+                    "html_length": len(str(lot_soup)),
+                    "matched_selector": matched_sel,
+                    "lot_containers_found": len(lot_containers),
+                    "price_snippets_in_first_tile": price_snippets[:20],
+                    "first_tile_full_html": first_tile_full,
+                }
             break
 
         return results

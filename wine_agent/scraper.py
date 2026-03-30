@@ -116,6 +116,7 @@ FILL_LEVELS = [
 # Slugs that appear in /auctions/ paths but are NOT individual auctions
 _SKIP_SLUGS = {
     "past", "results", "current", "archive", "upcoming",
+    "featured-wine-brands", "top-wine-regions",
     "australia", "france", "burgundy",
     "bordeaux", "champagne", "rhone", "italy",
 }
@@ -164,13 +165,7 @@ class LangtonsScraper:
 
         soup = self._fetch(self.base_url + "/auctions.html")
         if soup is not None:
-            # 1. Slug pages (featured-wine-brands, top-wine-regions, …)
-            for item in self._find_auction_links(soup):
-                if item["auction_id"] not in seen:
-                    seen.add(item["auction_id"])
-                    auctions.append(item)
-
-            # 2. Weekly auctions — derive current-week URLs from past patterns
+            # Weekly auctions — derive current-week URLs from past patterns
             for item in self._generate_current_auction_urls(soup):
                 if item["auction_id"] not in seen:
                     seen.add(item["auction_id"])

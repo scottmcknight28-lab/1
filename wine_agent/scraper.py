@@ -149,16 +149,24 @@ class LangtonsScraper:
         auctions: list[dict] = []
         seen: set[str] = set()
 
-        # Primary: SFCC auction listing pages
-        paths_to_try = [
-            "/auctions.html",
-            "/auctions",
-            f"{_DW_BASE}/Auction-ClosedAuction?auctionStatus=Closed",
-        ]
-        for path in paths_to_try:
+        # Primary listing pages — try in order, stop at first that returns results
+        # (auctions.html and /auctions are equivalent; avoid fetching both)
+        for path in ["/auctions.html", "/auctions"]:
             soup = self._fetch(self.base_url + path)
             if soup is None:
                 continue
+            for item in self._find_auction_links(soup):
+                aid = item["auction_id"]
+                if aid not in seen:
+                    seen.add(aid)
+                    auctions.append(item)
+            if auctions:
+                break  # found results — skip the fallback URL
+
+        # Also check the closed/past auction endpoint for results data
+        closed_url = self.base_url + f"{_DW_BASE}/Auction-ClosedAuction?auctionStatus=Closed"
+        soup = self._fetch(closed_url)
+        if soup:
             for item in self._find_auction_links(soup):
                 aid = item["auction_id"]
                 if aid not in seen:

@@ -31,7 +31,7 @@ from .strategy import BiddingStrategy
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-6"
+MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """\
 You are an expert wine auction analyst specialising in Langton's fine wine auctions.
@@ -285,8 +285,7 @@ class WineAuctionAgent:
             with status_ctx:
                 response = self.client.messages.create(
                     model=MODEL,
-                    max_tokens=4096,
-                    thinking={"type": "adaptive"},
+                    max_tokens=2048,
                     system=SYSTEM_PROMPT,
                     tools=TOOLS,
                     messages=messages,
